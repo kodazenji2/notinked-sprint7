@@ -1,0 +1,47 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: #160f1f;
+  color: #e8e5f0;
+}
+
+.wordmark {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.08em;
+  font-weight: 700;
+  letter-spacing: -0.05em;
+  line-height: 1;
+}
+
+.wordmark .not {
+  color: #a796c9;
+}
+
+.wordmark .not.strike {
+  position: relative;
+  display: inline-block;
+}
+
+.wordmark .not.strike::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 2px;
+  border-radius: 9999px;
+  background: #c97575;
+  transform: translateY(-50%) rotate(-12deg);
+}
+
+.wordmark .inked {
+  color: #e8e5f0;
+}
