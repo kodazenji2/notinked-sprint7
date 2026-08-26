@@ -1,5 +1,6 @@
 import { createPublicClient, http, isAddress, type Address } from "viem";
-import { isKnownRisk } from "./riskRegistry";
+import { autoFlagIfRisky, isKnownRisk } from "./riskRegistry";
+import { checkContract, type ContractCheckResult } from "./checkContract";
 
 /**
  * Ink mainnet config.
@@ -27,9 +28,13 @@ const client = createPublicClient({
   transport: http(),
 });
 
-// keccak256("Approval(address,address,uint256)") — the standard ERC20
-// Approval event topic, same hash on every EVM chain.
-const APPROVAL_TOPIC0 = "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925";
+// keccak256("Approval(address,address,uint256)")
+const APPROVAL_TOPIC0 =
+  "0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925";
+
+// keccak256("ApprovalForAll(address,address,bool)")
+const APPROVAL_FOR_ALL_TOPIC0 =
+  "0x17307eab39ab6107e8899845ad3d59bd9653f200f220920489ca2b5937696c31";
 
 const ALLOWANCE_ABI = [
   {
@@ -57,8 +62,19 @@ export type ApprovalRisk = "red" | "yellow" | "green";
 export interface ApprovalResult {
   spender: Address;
   tokenAddress: Address;
-  currentAllowance: string; // live value, not the historical Approval event value
+  currentAllowance: string;
   isUnlimited: boolean;
+  isKnownRisk: boolean;
+  risk: ApprovalRisk;
+  reason: string;
+  lastApprovalTxHash: string;
+  lastApprovalBlock: string;
+}
+
+export interface NftApprovalResult {
+  operator: Address;
+  collectionAddress: Address;
+  approved: boolean;
   isKnownRisk: boolean;
   risk: ApprovalRisk;
   reason: string;
@@ -69,6 +85,9 @@ export interface ApprovalResult {
 export interface ScanResult {
   wallet: Address;
   approvals: ApprovalResult[];
+  nftApprovals: NftApprovalResult[];
+  historicalApprovalCount: number;
+  historicalNftApprovalCount: number;
   discoveryMethod: string;
   error?: string;
 }
@@ -81,6 +100,18 @@ const APPROVAL_EVENT_ABI = [
       { name: "owner", type: "address", indexed: true },
       { name: "spender", type: "address", indexed: true },
       { name: "value", type: "uint256", indexed: false },
+    ],
+  },
+] as const;
+
+const APPROVAL_FOR_ALL_EVENT_ABI = [
+  {
+    type: "event",
+    name: "ApprovalForAll",
+    inputs: [
+      { name: "owner", type: "address", indexed: true },
+      { name: "operator", type: "address", indexed: true },
+      { name: "approved", type: "bool", indexed: false },
     ],
   },
 ] as const;
@@ -98,23 +129,14 @@ interface DiscoveredLog {
 }
 
 /**
- * PRIMARY discovery method — queries Ink's own Blockscout explorer, which
- * already indexes every log on the chain. Revoke.cash's own chain-support
- * requirements confirm this is a standard, accepted approach: they
- * explicitly accept "a block explorer with an exposed API compatible with
- * Etherscan's API (such as Blockscout)" as sufficient for full historical
- * log discovery.
- *
- * ⚠️ UNVERIFIED ASSUMPTION, flagged honestly: this was built against
- * Blockscout's documented legacy API shape, but has not been confirmed
- * against Ink's actual live deployment from this environment (no network
- * access to explorer.inkonchain.com from here). Some newer Blockscout
- * instances only expose the REST v2 API and disable this legacy endpoint
- * entirely — if that's true for Ink, this will fail and the code below
- * falls back to a direct RPC scan rather than silently returning nothing.
+ * PRIMARY ERC20 discovery method — queries Ink's Blockscout explorer.
  */
-async function discoverViaBlockscout(wallet: Address): Promise<DiscoveredLog[]> {
-  const ownerTopic = `0x${"0".repeat(24)}${wallet.slice(2).toLowerCase()}`;
+async function discoverViaBlockscout(
+  wallet: Address
+): Promise<DiscoveredLog[]> {
+  const ownerTopic = `0x${"0".repeat(24)}${wallet
+    .slice(2)
+    .toLowerCase()}`;
 
   const url = new URL(EXPLORER_LEGACY_API);
   url.searchParams.set("module", "logs");
@@ -126,36 +148,45 @@ async function discoverViaBlockscout(wallet: Address): Promise<DiscoveredLog[]> 
   url.searchParams.set("topic0_1_opr", "and");
 
   const res = await fetch(url.toString());
+
   if (!res.ok) {
     throw new Error(`Explorer log search failed (${res.status})`);
   }
 
   let data: any;
+
   try {
     data = await res.json();
   } catch {
-    // The endpoint returned something that isn't JSON at all — most
-    // likely this legacy API path isn't enabled on this Blockscout
-    // instance. Treat as unavailable so the fallback kicks in, rather
-    // than crashing the whole scan.
-    throw new Error("Explorer legacy API did not return JSON — likely not enabled on this instance");
+    throw new Error(
+      "Explorer legacy API did not return JSON — likely not enabled on this instance"
+    );
   }
 
   if (data.status !== "1" || !Array.isArray(data.result)) {
-    // Confirmed via live testing against Ink's real explorer: the actual
-    // wording for a legitimate empty result is "No logs found" (status
-    // "0") — NOT "no records", which was the original guess and didn't
-    // match, causing a valid empty result to be thrown as an error.
-    const msg = typeof data.message === "string" ? data.message.toLowerCase() : "";
-    if (msg.includes("no logs") || msg.includes("no records") || msg.includes("not found")) {
+    const msg =
+      typeof data.message === "string"
+        ? data.message.toLowerCase()
+        : "";
+
+    if (
+      msg.includes("no logs") ||
+      msg.includes("no records") ||
+      msg.includes("not found")
+    ) {
       return [];
     }
-    throw new Error(data.message || "Unexpected response from explorer log search");
+
+    throw new Error(
+      data.message || "Unexpected response from explorer log search"
+    );
   }
 
   const logs: DiscoveredLog[] = [];
+
   for (const log of data.result) {
     if (!log.topics || log.topics.length < 3) continue;
+
     logs.push({
       address: log.address,
       spenderTopic: log.topics[2],
@@ -163,28 +194,108 @@ async function discoverViaBlockscout(wallet: Address): Promise<DiscoveredLog[]> 
       transactionHash: log.transactionHash,
     });
   }
+
   return logs;
 }
 
-// Fallback scan depth if the explorer API is unavailable — smaller and
-// bounded, so it degrades gracefully instead of timing out. This does
-// NOT provide full history; it's a safety net, not a replacement.
+/**
+ * NFT discovery through Blockscout.
+ */
+async function discoverNftViaBlockscout(
+  wallet: Address
+): Promise<DiscoveredLog[]> {
+  const ownerTopic = `0x${"0".repeat(24)}${wallet
+    .slice(2)
+    .toLowerCase()}`;
+
+  const url = new URL(EXPLORER_LEGACY_API);
+  url.searchParams.set("module", "logs");
+  url.searchParams.set("action", "getLogs");
+  url.searchParams.set("fromBlock", "0");
+  url.searchParams.set("toBlock", "latest");
+  url.searchParams.set("topic0", APPROVAL_FOR_ALL_TOPIC0);
+  url.searchParams.set("topic1", ownerTopic);
+  url.searchParams.set("topic0_1_opr", "and");
+
+  const res = await fetch(url.toString());
+
+  if (!res.ok) {
+    throw new Error(
+      `Explorer NFT log search failed (${res.status})`
+    );
+  }
+
+  let data: any;
+
+  try {
+    data = await res.json();
+  } catch {
+    throw new Error(
+      "Explorer NFT legacy API did not return JSON — likely not enabled on this instance"
+    );
+  }
+
+  if (data.status !== "1" || !Array.isArray(data.result)) {
+    const msg =
+      typeof data.message === "string"
+        ? data.message.toLowerCase()
+        : "";
+
+    if (
+      msg.includes("no logs") ||
+      msg.includes("no records") ||
+      msg.includes("not found")
+    ) {
+      return [];
+    }
+
+    throw new Error(
+      data.message ||
+        "Unexpected response from explorer NFT log search"
+    );
+  }
+
+  const logs: DiscoveredLog[] = [];
+
+  for (const log of data.result) {
+    if (!log.topics || log.topics.length < 3) continue;
+
+    logs.push({
+      address: log.address,
+      spenderTopic: log.topics[2],
+      blockNumber: BigInt(log.blockNumber).toString(),
+      transactionHash: log.transactionHash,
+    });
+  }
+
+  return logs;
+}
+
+// Fallback scan depth if the explorer API is unavailable.
 const FALLBACK_CHUNK_SIZE = 10_000n;
-const FALLBACK_MAX_CHUNKS = 50; // 500,000 blocks ≈ ~6 days at Ink's ~1s block time
+const FALLBACK_MAX_CHUNKS = 50;
 
 /**
- * FALLBACK discovery method — direct RPC log scanning, bounded and
- * chunked. Only runs if the Blockscout path above fails. Real, working,
- * but explicitly NOT full history — see FALLBACK_MAX_CHUNKS above.
+ * FALLBACK ERC20 discovery — direct RPC log scanning.
  */
-async function discoverViaRpc(wallet: Address): Promise<{ logs: DiscoveredLog[]; reachedChainStart: boolean }> {
+async function discoverViaRpc(
+  wallet: Address
+): Promise<{
+  logs: DiscoveredLog[];
+  reachedChainStart: boolean;
+}> {
   const latestBlock = await client.getBlockNumber();
+
   let toBlock = latestBlock;
   let reachedChainStart = false;
+
   const logs: DiscoveredLog[] = [];
 
   for (let i = 0; i < FALLBACK_MAX_CHUNKS; i++) {
-    const fromBlock = toBlock > FALLBACK_CHUNK_SIZE ? toBlock - FALLBACK_CHUNK_SIZE + 1n : 0n;
+    const fromBlock =
+      toBlock > FALLBACK_CHUNK_SIZE
+        ? toBlock - FALLBACK_CHUNK_SIZE + 1n
+        : 0n;
 
     const chunkLogs = await client.getLogs({
       event: APPROVAL_EVENT_ABI[0],
@@ -206,31 +317,99 @@ async function discoverViaRpc(wallet: Address): Promise<{ logs: DiscoveredLog[];
       reachedChainStart = true;
       break;
     }
+
     toBlock = fromBlock - 1n;
   }
 
-  return { logs, reachedChainStart };
+  return {
+    logs,
+    reachedChainStart,
+  };
 }
 
 /**
- * Tries Blockscout first (potentially full history, one request). Falls
- * back to a bounded direct RPC scan if Blockscout's legacy API fails or
- * behaves unexpectedly — so an infrastructure gap shows up as a labeled
- * partial scan, not indistinguishable from "this wallet has zero
- * approvals."
+ * FALLBACK NFT discovery — direct RPC log scanning.
+ */
+async function discoverNftViaRpc(
+  wallet: Address
+): Promise<{
+  logs: DiscoveredLog[];
+  reachedChainStart: boolean;
+}> {
+  const latestBlock = await client.getBlockNumber();
+
+  let toBlock = latestBlock;
+  let reachedChainStart = false;
+
+  const logs: DiscoveredLog[] = [];
+
+  for (let i = 0; i < FALLBACK_MAX_CHUNKS; i++) {
+    const fromBlock =
+      toBlock > FALLBACK_CHUNK_SIZE
+        ? toBlock - FALLBACK_CHUNK_SIZE + 1n
+        : 0n;
+
+    const chunkLogs = await client.getLogs({
+      event: APPROVAL_FOR_ALL_EVENT_ABI[0],
+      args: { owner: wallet },
+      fromBlock,
+      toBlock,
+    });
+
+    for (const log of chunkLogs) {
+      logs.push({
+        address: log.address,
+        spenderTopic: log.topics[2] as string,
+        blockNumber: log.blockNumber!.toString(),
+        transactionHash: log.transactionHash as string,
+      });
+    }
+
+    if (fromBlock === 0n) {
+      reachedChainStart = true;
+      break;
+    }
+
+    toBlock = fromBlock - 1n;
+  }
+
+  return {
+    logs,
+    reachedChainStart,
+  };
+}
+
+/**
+ * ERC20 discovery:
+ * Blockscout first, bounded RPC fallback.
  */
 async function discoverApprovalLogs(
   wallet: Address
-): Promise<{ logs: DiscoveredLog[]; method: string }> {
+): Promise<{
+  logs: DiscoveredLog[];
+  method: string;
+}> {
   try {
     const logs = await discoverViaBlockscout(wallet);
-    return { logs, method: "Ink explorer (Blockscout) indexed log search — full history" };
+
+    return {
+      logs,
+      method:
+        "Ink explorer (Blockscout) indexed log search — full history",
+    };
   } catch (err) {
-    const reason = err instanceof Error ? err.message : "unknown error";
-    const { logs, reachedChainStart } = await discoverViaRpc(wallet);
+    const reason =
+      err instanceof Error ? err.message : "unknown error";
+
+    const { logs, reachedChainStart } =
+      await discoverViaRpc(wallet);
+
     const coverage = reachedChainStart
       ? "full history"
-      : `partial history only — last ~${FALLBACK_MAX_CHUNKS * Number(FALLBACK_CHUNK_SIZE)} blocks`;
+      : `partial history only — last ~${
+          FALLBACK_MAX_CHUNKS * Number(FALLBACK_CHUNK_SIZE)
+        } blocks`;
+
     return {
       logs,
       method: `Fallback direct RPC scan (Blockscout unavailable: ${reason}) — ${coverage}`,
@@ -239,35 +418,97 @@ async function discoverApprovalLogs(
 }
 
 /**
- * Two-step approach, matching how Revoke.cash (the established
- * open-source leader in this space) actually works:
- *
- * STEP 1 — DISCOVERY: find every (token, spender) pair this wallet has
- * ever approved, via Ink's Blockscout explorer (already-indexed, full
- * history, no chunking needed).
- *
- * STEP 2 — VERIFICATION: batch a LIVE allowance() read for every
- * discovered pair via Multicall3, in one RPC call. This is necessary
- * because an Approval event only shows the value that was SET, not what
- * remains after any partial transferFrom() spends since — trusting the
- * event value alone can show a stale or wrong number.
+ * NFT discovery:
+ * Blockscout first, bounded RPC fallback.
  */
-export async function scanWalletApprovals(walletInput: string): Promise<ScanResult> {
+async function discoverNftApprovalLogs(
+  wallet: Address
+): Promise<{
+  logs: DiscoveredLog[];
+  method: string;
+}> {
+  try {
+    const logs = await discoverNftViaBlockscout(wallet);
+
+    return {
+      logs,
+      method:
+        "Ink explorer (Blockscout) indexed NFT approval log search — full history",
+    };
+  } catch (err) {
+    const reason =
+      err instanceof Error ? err.message : "unknown error";
+
+    const { logs, reachedChainStart } =
+      await discoverNftViaRpc(wallet);
+
+    const coverage = reachedChainStart
+      ? "full history"
+      : `partial history only — last ~${
+          FALLBACK_MAX_CHUNKS * Number(FALLBACK_CHUNK_SIZE)
+        } blocks`;
+
+    return {
+      logs,
+      method: `Fallback direct RPC NFT scan (Blockscout unavailable: ${reason}) — ${coverage}`,
+    };
+  }
+}
+
+/**
+ * Two-step approach:
+ *
+ * STEP 1 — DISCOVERY
+ * Find historical ERC20 approvals and NFT ApprovalForAll events.
+ *
+ * STEP 2 — VERIFICATION
+ * Read current ERC20 allowances live through Multicall3.
+ *
+ * NFT approvals are determined from the latest ApprovalForAll event
+ * for each collection/operator pair.
+ */
+export async function scanWalletApprovals(
+  walletInput: string
+): Promise<ScanResult> {
   if (!isAddress(walletInput)) {
     throw new Error("Not a valid EVM address");
   }
+
   const wallet = walletInput as Address;
 
-  // --- STEP 1: DISCOVERY (Blockscout, falls back to direct RPC) ---
-  const { logs, method } = await discoverApprovalLogs(wallet);
+  // --- STEP 1: DISCOVERY ---
+  const [erc20Discovery, nftDiscovery] =
+    await Promise.all([
+      discoverApprovalLogs(wallet),
+      discoverNftApprovalLogs(wallet),
+    ]);
 
-  const pairs = new Map<string, { tokenAddress: Address; spender: Address; lastTxHash: string; lastBlock: string }>();
+  const logs = erc20Discovery.logs;
+  const nftLogs = nftDiscovery.logs;
+
+  // --- ERC20 PAIRS ---
+  const pairs = new Map<
+    string,
+    {
+      tokenAddress: Address;
+      spender: Address;
+      lastTxHash: string;
+      lastBlock: string;
+    }
+  >();
+
   for (const log of logs) {
     const spender = addressFromTopic(log.spenderTopic);
     const tokenAddress = log.address as Address;
+
     const key = `${tokenAddress}-${spender}`;
+
     const existing = pairs.get(key);
-    if (!existing || BigInt(log.blockNumber) > BigInt(existing.lastBlock)) {
+
+    if (
+      !existing ||
+      BigInt(log.blockNumber) > BigInt(existing.lastBlock)
+    ) {
       pairs.set(key, {
         tokenAddress,
         spender,
@@ -279,46 +520,79 @@ export async function scanWalletApprovals(walletInput: string): Promise<ScanResu
 
   const pairList = Array.from(pairs.values());
 
-  if (pairList.length === 0) {
-    return {
-      wallet,
-      approvals: [],
-      discoveryMethod: method,
-    };
+  // --- NFT OPERATORS ---
+  const nftOperators = new Set<Address>();
+
+  for (const log of nftLogs) {
+    const operator = addressFromTopic(log.spenderTopic);
+    nftOperators.add(operator);
   }
 
-  // --- STEP 2: VERIFICATION (live, batched via Multicall3) ---
-  const multicallResults = await client.multicall({
-    contracts: pairList.map((p) => ({
-      address: p.tokenAddress,
-      abi: ALLOWANCE_ABI,
-      functionName: "allowance",
-      args: [wallet, p.spender],
-    })),
-    allowFailure: true,
-  });
+  // --- CONTRACT ENRICHMENT ---
+  const operators = new Set<Address>([
+    ...pairList.map((pair) => pair.spender),
+    ...nftOperators,
+  ]);
 
-  const approvals: ApprovalResult[] = pairList
+  const contractChecks = new Map<
+    string,
+    ContractCheckResult
+  >();
+
+  await Promise.all(
+    Array.from(operators).map(async (operator) => {
+      try {
+        contractChecks.set(
+          operator.toLowerCase(),
+          await checkContract(operator)
+        );
+      } catch {
+        // A failed enrichment must not hide the approval itself.
+      }
+    })
+  );
+
+  // --- STEP 2: LIVE ERC20 VERIFICATION ---
+  const multicallResults =
+    pairList.length === 0
+      ? []
+      : await client.multicall({
+          contracts: pairList.map((p) => ({
+            address: p.tokenAddress,
+            abi: ALLOWANCE_ABI,
+            functionName: "allowance",
+            args: [wallet, p.spender],
+          })),
+          allowFailure: true,
+        });
+
+  const rawApprovals = pairList
     .map((pair, i) => {
       const result = multicallResults[i];
+
       if (result.status !== "success") return null;
 
       const currentAllowance = result.result as bigint;
-      if (currentAllowance === 0n) return null; // fully spent or revoked since
 
-      const isUnlimited = currentAllowance >= UNLIMITED_THRESHOLD;
+      if (currentAllowance === 0n) return null;
+
+      const isUnlimited =
+        currentAllowance >= UNLIMITED_THRESHOLD;
+
       const riskEntry = isKnownRisk(pair.spender);
       const isKnownRiskFlag = Boolean(riskEntry);
 
       let risk: ApprovalRisk = "green";
-      let reason = "Limited approval to an unflagged address.";
+      let reason =
+        "Limited approval to an unflagged address.";
 
       if (isKnownRiskFlag) {
         risk = "red";
         reason = riskEntry!.reason;
       } else if (isUnlimited) {
         risk = "yellow";
-        reason = "Unlimited approval — this contract can move your full token balance at any time.";
+        reason =
+          "Unlimited approval — this contract can move your full token balance at any time.";
       }
 
       return {
@@ -333,15 +607,167 @@ export async function scanWalletApprovals(walletInput: string): Promise<ScanResu
         lastApprovalBlock: pair.lastBlock,
       };
     })
-    .filter((a): a is ApprovalResult => a !== null)
+    .filter(
+      (a): a is ApprovalResult => a !== null
+    );
+
+  // --- ENRICH ERC20 APPROVALS ---
+  const approvals = rawApprovals
+    .map((approval) => {
+      const contractCheck = contractChecks.get(
+        approval.spender.toLowerCase()
+      );
+
+      if (!contractCheck) return approval;
+
+      const reasons = [
+        ...new Set([
+          ...contractCheck.reasons,
+          approval.reason,
+        ]),
+      ];
+
+      const risk: ApprovalRisk =
+        contractCheck.risk === "red" ||
+        approval.risk === "red"
+          ? "red"
+          : contractCheck.risk === "yellow" ||
+              approval.risk === "yellow"
+            ? "yellow"
+            : "green";
+
+      const enriched = {
+        ...approval,
+        risk,
+        isKnownRisk:
+          approval.isKnownRisk ||
+          contractCheck.isKnownRisk,
+        reason: reasons.join(" "),
+      };
+
+      if (risk !== "green") {
+        autoFlagIfRisky(
+          approval.spender,
+          risk,
+          reasons
+        );
+      }
+
+      return enriched;
+    })
     .sort((a, b) => {
-      const order = { red: 0, yellow: 1, green: 2 };
+      const order = {
+        red: 0,
+        yellow: 1,
+        green: 2,
+      };
+
       return order[a.risk] - order[b.risk];
     });
+
+  // --- NFT APPROVALS ---
+  const nftApprovals = new Map<
+    string,
+    NftApprovalResult
+  >();
+
+  for (const log of nftLogs) {
+    const operator = addressFromTopic(log.spenderTopic);
+
+    const collectionAddress =
+      log.address as Address;
+
+    const key = `${collectionAddress.toLowerCase()}-${operator.toLowerCase()}`;
+
+    const block = BigInt(log.blockNumber);
+
+    const existing = nftApprovals.get(key);
+
+    // Keep only the newest ApprovalForAll event.
+    if (
+      existing &&
+      BigInt(existing.lastApprovalBlock) >= block
+    ) {
+      continue;
+    }
+
+    /**
+     * ApprovalForAll(bool) is encoded in the event data.
+     * 0 = revoked
+     * non-zero = approved
+     */
+    let approved = false;
+
+    try {
+      approved = BigInt(log.data ?? "0x0") !== 0n;
+    } catch {
+      approved = false;
+    }
+
+    const contractCheck = contractChecks.get(
+      operator.toLowerCase()
+    );
+
+    const registryHit = isKnownRisk(operator);
+
+    const risk: ApprovalRisk =
+      registryHit || contractCheck?.risk === "red"
+        ? "red"
+        : contractCheck?.risk === "yellow"
+          ? "yellow"
+          : "green";
+
+    const reason = [
+      ...new Set([
+        "Blanket NFT collection approval — this operator can transfer NFTs from this collection.",
+        ...(contractCheck?.reasons ?? []),
+      ]),
+    ].join(" ");
+
+    nftApprovals.set(key, {
+      operator,
+      collectionAddress,
+      approved,
+      isKnownRisk: Boolean(
+        registryHit || contractCheck?.isKnownRisk
+      ),
+      risk,
+      reason,
+      lastApprovalTxHash: log.transactionHash,
+      lastApprovalBlock: block.toString(),
+    });
+  }
+
+  // Only currently active NFT approvals are shown.
+  const activeNftApprovals = Array.from(
+    nftApprovals.values()
+  ).filter((approval) => approval.approved);
+
+  // Flag risky NFT operators too.
+  for (const approval of activeNftApprovals) {
+    if (approval.risk !== "green") {
+      autoFlagIfRisky(
+        approval.operator,
+        approval.risk,
+        [approval.reason]
+      );
+    }
+  }
+
+  // Keep the ERC20 discovery method as the primary method
+  // shown to the UI, while also indicating NFT fallback status
+  // if it differs.
+  const discoveryMethod =
+    erc20Discovery.method === nftDiscovery.method
+      ? erc20Discovery.method
+      : `${erc20Discovery.method}; NFT: ${nftDiscovery.method}`;
 
   return {
     wallet,
     approvals,
-    discoveryMethod: method,
+    nftApprovals: activeNftApprovals,
+    historicalApprovalCount: logs.length,
+    historicalNftApprovalCount: nftLogs.length,
+    discoveryMethod,
   };
 }
