@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { scanWalletApprovals } from "@/lib/scanWallet";
+import { withCache } from "@/lib/cache";
 
 export async function POST(req: NextRequest) {
   try {
@@ -9,7 +10,16 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing wallet address" }, { status: 400 });
     }
 
-    const result = await scanWalletApprovals(wallet);
+    // Cache for 60 seconds — approvals don't change second-to-second, and
+    // this avoids re-hitting Blockscout/RPC on repeated checks of the
+    // same wallet in quick succession (e.g. someone refreshing, or our
+    // own testing).
+    const result = await withCache(
+      `scan:${wallet.toLowerCase()}`,
+      60,
+      () => scanWalletApprovals(wallet)
+    );
+
     return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Scan failed";
