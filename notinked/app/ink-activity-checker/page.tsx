@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import type { ActivityCheckResult } from "@/lib/checkActivity";
+import type { ActivityCheckResult } from "../../lib/checkActivity";
 
 export default function ActivityCheckerPage() {
   const [wallet, setWallet] = useState("");
