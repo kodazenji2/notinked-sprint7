@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { checkActivity } from "@/lib/checkActivity";
+import { withCache } from "@/lib/cache";
 
 export async function POST(req: NextRequest) {
   try {
@@ -9,7 +10,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing wallet address" }, { status: 400 });
     }
 
-    const result = await checkActivity(wallet);
+    // Cache for 60 seconds — same reasoning as the scan route.
+    const result = await withCache(
+      `activity:${wallet.toLowerCase()}`,
+      60,
+      () => checkActivity(wallet)
+    );
+
     return NextResponse.json(result);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Activity check failed";
