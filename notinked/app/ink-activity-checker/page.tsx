@@ -39,8 +39,11 @@ export default function ActivityCheckerPage() {
         </div>
         <h1 className="text-3xl font-bold mb-2">Activity Tracker</h1>
         <p className="text-muted text-sm">
-          See your on-chain footprint on Ink — not an official points calculator.
+          See how active this wallet is for the $INK airdrop — not an official points calculator.
         </p>
+        <Link href="/" className="inline-block text-primary text-xs mt-3 hover:underline">
+          ← Back to NotInked safety tools
+        </Link>
       </div>
 
       <div className="bg-warn/10 border border-warn/40 text-warn text-xs rounded-lg px-4 py-3 mb-8 leading-relaxed">
