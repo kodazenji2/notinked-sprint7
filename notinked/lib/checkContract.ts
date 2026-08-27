@@ -48,6 +48,45 @@ export interface ContractCheckResult {
   dangerousFunctions?: string[];
   topHolderPercent?: number | null;
   possibleNameSpoof?: boolean | null;
+  deployerAddress: string | null;
+  ownershipStatus: "renounced" | "owned" | "no-owner-function" | "unknown";
+  currentOwner: string | null;
+}
+
+const OWNABLE_ABI = [
+  {
+    name: "owner",
+    type: "function",
+    stateMutability: "view",
+    inputs: [],
+    outputs: [{ name: "", type: "address" }],
+  },
+] as const;
+const ZERO_ADDRESS = "0x0000000000000000000000000000000000000000";
+
+/**
+ * Live on-chain read of the standard OpenZeppelin Ownable owner()
+ * function. A convention, not a guarantee — some contracts intentionally
+ * avoid implementing it, or use a different pattern (AccessControl roles,
+ * multisig-only, etc.), which is why "no-owner-function" is a distinct,
+ * non-alarming result rather than being lumped in with "unknown"/error.
+ */
+async function checkOwnership(
+  address: `0x${string}`
+): Promise<{ status: "renounced" | "owned" | "no-owner-function"; owner: string | null }> {
+  try {
+    const owner = await INK_CLIENT.readContract({
+      address,
+      abi: OWNABLE_ABI,
+      functionName: "owner",
+    });
+    if (owner.toLowerCase() === ZERO_ADDRESS) {
+      return { status: "renounced", owner: owner as string };
+    }
+    return { status: "owned", owner: owner as string };
+  } catch {
+    return { status: "no-owner-function", owner: null };
+  }
 }
 
 const NEW_CONTRACT_THRESHOLD_DAYS = 7;
@@ -79,6 +118,9 @@ async function checkContractUncached(addressInput: string): Promise<ContractChec
       dangerousFunctions: [],
       topHolderPercent: null,
       possibleNameSpoof: null,
+      deployerAddress: null,
+      ownershipStatus: "unknown",
+      currentOwner: null,
     };
   }
 
@@ -116,15 +158,17 @@ async function checkContractUncached(addressInput: string): Promise<ContractChec
     reasons.push("Could not reach Ink explorer to check verification status.");
   }
 
-  // 3. Get creation info (age) via the address endpoint
+  // 3. Get creation info (age + deployer) via the address endpoint
   let deployedAt: string | null = null;
   let ageInDays: number | null = null;
+  let deployerAddress: string | null = null;
 
   try {
     const res = await fetch(`${EXPLORER_BASE}/addresses/${address}`);
     if (res.ok) {
       const data = await res.json();
       isContract = isContract || Boolean(data.is_contract);
+      deployerAddress = data.creator_address_hash ?? null;
 
       const creationTransactionHash = data.creation_transaction_hash ?? data.creation_tx_hash;
       if (creationTransactionHash) {
@@ -155,6 +199,14 @@ async function checkContractUncached(addressInput: string): Promise<ContractChec
     }
   }
 
+  let ownershipStatus: "renounced" | "owned" | "no-owner-function" | "unknown" = "unknown";
+  let currentOwner: string | null = null;
+  if (isContract) {
+    const ownership = await checkOwnership(address as `0x${string}`);
+    ownershipStatus = ownership.status;
+    currentOwner = ownership.owner;
+  }
+
   if (!isContract) {
     return {
       address,
@@ -171,6 +223,9 @@ async function checkContractUncached(addressInput: string): Promise<ContractChec
       dangerousFunctions: [],
       topHolderPercent: null,
       possibleNameSpoof: null,
+      deployerAddress: null,
+      ownershipStatus: "unknown",
+      currentOwner: null,
     };
   }
 
@@ -190,6 +245,22 @@ async function checkContractUncached(addressInput: string): Promise<ContractChec
     reasons.push(proxyAdmin
       ? `Proxy detected. Admin ${proxyAdmin} can swap the implementation, so ownership checks on this proxy may not reflect logic control.`
       : "Proxy detected. The admin can swap the implementation, so ownership checks on this proxy may not reflect logic control.");
+  }
+
+  if (deployerAddress) {
+    reasons.push(`Deployed by ${deployerAddress}.`);
+  }
+
+  if (ownershipStatus === "renounced") {
+    reasons.push("Ownership renounced — no address currently holds owner-only privileges.");
+  } else if (ownershipStatus === "owned") {
+    reasons.push(`Ownership NOT renounced — ${currentOwner} still holds owner-only privileges.`);
+    if (isVerified === false || (ageInDays !== null && ageInDays < NEW_CONTRACT_THRESHOLD_DAYS)) {
+      risk = risk === "green" ? "yellow" : risk;
+      reasons.push("Combined with the above, someone can still act on this contract with elevated privileges while its behavior can't be fully verified or hasn't been tested by time.");
+    }
+  } else if (ownershipStatus === "no-owner-function") {
+    reasons.push("No standard owner() function found — either uses a different access-control pattern, or ownership information isn't available this way.");
   }
 
   if (dangerousFunctions.length > 0) {
@@ -258,6 +329,9 @@ async function checkContractUncached(addressInput: string): Promise<ContractChec
     dangerousFunctions,
     topHolderPercent,
     possibleNameSpoof,
+    deployerAddress,
+    ownershipStatus,
+    currentOwner,
   };
 }
 
