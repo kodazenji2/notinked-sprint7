@@ -19,12 +19,22 @@ import { autoFlagIfRisky, isKnownRisk } from "./riskRegistry";
 
 const EXPLORER_BASE = "https://explorer.inkonchain.com/api/v2";
 const EIP1967_ADMIN_SLOT = "0xb53127684a568b3173ae13b9f8a6016e243e63b6e8ee1178d6a717850b5d6d4" as const;
+
+// Use the keyed NodeFlare endpoint when NODEFLARE_API_KEY is set (higher
+// rate limits and access to methods the free public endpoint restricts —
+// confirmed via live testing that eth_getStorageAt 403s on /ink/public).
+// Falls back to the public endpoint if no key is configured, so this
+// still works out of the box without one.
+const INK_RPC_URL = process.env.NODEFLARE_API_KEY
+  ? `https://rpc.nodeflare.app/ink/v1/${process.env.NODEFLARE_API_KEY}`
+  : "https://rpc.nodeflare.app/ink/public";
+
 const INK_CLIENT = createPublicClient({
   chain: {
     id: 57073,
     name: "Ink",
     nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 },
-    rpcUrls: { default: { http: ["https://rpc.nodeflare.app/ink/public"] } },
+    rpcUrls: { default: { http: [INK_RPC_URL] } },
   },
   transport: http(),
 });
@@ -222,11 +232,9 @@ async function checkContractUncached(addressInput: string): Promise<ContractChec
   }
 
   if (isContract && bytecodeEmbeddedImplementation) {
-    // Confirmed via live testing on a real EIP-1167 clone: this pattern
-    // has NO admin, NO storage-based implementation slot, and cannot be
-    // upgraded — the implementation is permanently fixed in bytecode.
-    // Checking EIP-1967-style slots here would be checking the wrong
-    // mechanism entirely, so it's skipped for this pattern specifically.
+    // Confirmed via live testing: this pattern has no admin and cannot
+    // be upgraded — the implementation is permanently fixed in bytecode,
+    // not stored in a slot at all.
     isProxy = true;
     if (!implementationAddressFromSlot) {
       implementationAddressFromSlot = bytecodeEmbeddedImplementation;
@@ -235,30 +243,27 @@ async function checkContractUncached(addressInput: string): Promise<ContractChec
       `This is a minimal/clone proxy — implementation is hardcoded in its bytecode as ${bytecodeEmbeddedImplementation} and cannot be changed. No admin exists for this proxy type, by design.`
     );
   } else if (isContract) {
-    // Data-driven slot registry — add a new pattern here as a single
-    // entry, no new branching logic needed elsewhere. Covers every
-    // storage-slot-based proxy pattern currently known to matter on
-    // EVM chains, not just one or two named standards:
-    //   - EIP-1967 admin/implementation/beacon: the modern standard
-    //     (OpenZeppelin TransparentUpgradeableProxy, UUPS, beacon
-    //     proxies)
-    //   - EIP-1967 predates a formal "rollback" slot for legacy UUPS,
-    //     but implementation slot covers both UUPS and transparent
-    //   - Gnosis Safe singleton: NOT an EIP-1967 pattern at all — Safe
-    //     proxies store their mastercopy/singleton address as the raw
-    //     first storage variable (slot 0), which is extremely common
-    //     on every EVM chain and would be invisible to EIP-1967-only
-    //     detection
-    const SLOT_REGISTRY: Array<{
-      label: string;
-      slot: `0x${string}`;
-      role: "admin" | "implementation" | "beacon";
-    }> = [
+    // Blockscout's own resolution runs first (already captured above via
+    // `implementations[]`/`proxy_type`) — this section is a SUPPLEMENTARY
+    // live check on top of that, not a replacement. It fills in gaps
+    // Blockscout might not classify, and cross-verifies what it did
+    // classify against the actual chain state.
+    //
+    // Data-driven registry — add a new pattern as one entry, no new
+    // branching logic needed elsewhere:
+    const EIP1967_IMPLEMENTATION_SLOT = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bb" as const;
+    const EIP1967_BEACON_SLOT = "0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d5" as const;
+    const GNOSIS_SAFE_SINGLETON_SLOT = `0x${"0".repeat(64)}` as `0x${string}`;
+
+    const SLOT_REGISTRY: Array<{ label: string; slot: `0x${string}`; role: "admin" | "implementation" | "beacon" }> = [
       { label: "EIP-1967 admin", slot: EIP1967_ADMIN_SLOT, role: "admin" },
-      { label: "EIP-1967 implementation", slot: "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bb", role: "implementation" },
-      { label: "EIP-1967 beacon", slot: "0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d5", role: "beacon" },
-      { label: "Gnosis Safe singleton", slot: `0x${"0".repeat(64)}` as `0x${string}`, role: "implementation" },
+      { label: "EIP-1967 implementation", slot: EIP1967_IMPLEMENTATION_SLOT, role: "implementation" },
+      { label: "EIP-1967 beacon", slot: EIP1967_BEACON_SLOT, role: "beacon" },
+      { label: "Gnosis Safe singleton", slot: GNOSIS_SAFE_SINGLETON_SLOT, role: "implementation" },
     ];
+
+    let slotReadFailures = 0;
+    let lastFailureMessage = "";
 
     for (const { label, slot, role } of SLOT_REGISTRY) {
       try {
@@ -270,25 +275,34 @@ async function checkContractUncached(addressInput: string): Promise<ContractChec
             proxyAdmin = resolvedAddress;
           } else if (role === "implementation" && !implementationAddressFromSlot) {
             implementationAddressFromSlot = resolvedAddress;
-            reasons.push(`Proxy implementation resolved via ${label} slot: ${resolvedAddress}.`);
           } else if (role === "beacon" && !beaconAddress) {
             beaconAddress = resolvedAddress;
           }
         }
       } catch (err) {
-        // Surface the REAL error instead of a generic message — if the
-        // RPC call itself is failing (rate limit, timeout, bad request),
-        // this is the only way to actually see that, rather than it
-        // looking identical to "this slot is genuinely empty."
-        const message = err instanceof Error ? err.message : String(err);
-        reasons.push(`Could not read the ${label} storage slot: ${message.slice(0, 150)}`);
+        slotReadFailures++;
+        lastFailureMessage = err instanceof Error ? err.message : String(err);
       }
+    }
+
+    // Consolidated: ONE message if reads failed, not one per slot (this
+    // was the earlier noisy version — 4 near-identical error lines when
+    // the RPC was blocked). Only surfaced if EVERY read failed; a mix of
+    // some succeeding/some failing isn't reported as an error at all,
+    // since that's expected (not every proxy populates every slot).
+    if (slotReadFailures === SLOT_REGISTRY.length) {
+      reasons.push(`Could not verify storage slots directly (RPC error: ${lastFailureMessage.slice(0, 120)}) — relying on explorer-resolved data only.`);
     }
 
     if (isProxy && !proxyAdmin && beaconAddress) {
       reasons.push(`This is a beacon proxy — upgrade control lives on the beacon contract (${beaconAddress}), not a direct admin address on the proxy itself.`);
-    } else if (isProxy && !proxyAdmin && implementationAddressFromSlot) {
-      reasons.push("This proxy has no separate admin slot populated — likely a UUPS-style proxy where upgrade control lives in the implementation contract itself, not a distinct ProxyAdmin.");
+    } else if (isProxy && implementationAddressFromSlot) {
+      reasons.push(`Proxy implementation: ${implementationAddressFromSlot}.`);
+    }
+    if (isProxy && !proxyAdmin && !beaconAddress) {
+      reasons.push(
+        "Admin/upgrade-control address could not be determined — this may mean the proxy has no separate admin (common for several proxy patterns), or that information isn't exposed by the explorer or chain for this contract."
+      );
     }
   }
 
