@@ -93,6 +93,11 @@ Previously `/api/public/risk-check` (what the embeddable widget calls) only chec
 - NFT approval risk is weaker than ERC20: there is no amount signal, so an unregistered drainer that passes contract checks can appear low-risk despite blanket NFT control.
 - Cross-pollination adds one full contract check per unique spender/operator. A wallet with many approvals will scan more slowly; a TTL cache would be the next optimization.
 - Permit-based approvals such as EIP-2612 remain invisible because they do not emit the events this scanner searches for.
+
+### Farmer activity checker (separate tool)
+`/ink-activity-checker` is intentionally separate from the safety product. It reports verifiable wallet activity snapshots for INK farmers, including indexed interactions with the supplied Nado mainnet contracts and the TydroInkPoints token address. It does not calculate points, estimate an allocation, or claim eligibility because official weighting is unpublished.
+
+The main `/` page remains limited to **Before You Ape**, **Wallet Scan**, and **Message Check**. It does not include points, farming scores, or $INK eligibility estimates.
 - Automatic findings without transaction evidence are not added to the public risk registry; a persistent evidence model is needed for non-transaction findings.
 
 ---
@@ -129,3 +134,13 @@ Open http://localhost:3000
 - Move reporter identities and consensus to persistent storage so it survives restarts and remains resistant to spoofed identities.
 - Add a non-transaction evidence model for ABI, proxy, holder, and message findings.
 - Add broader tests for Blockscout response parsing, approval state reduction, and external API failure cases.
+
+## Embedding
+Add the browser widget to any Ink dashboard:
+
+```html
+<div data-notinked-address="0xYourAddress"></div>
+<script src="https://YOUR_DEPLOYED_DOMAIN/widget.js" defer></script>
+```
+
+The script calls `/api/public/risk-check` and renders a single-address risk badge. It is currently contract/address-focused; wallet and message widgets, custom themes, callbacks, and an iframe wrapper are not implemented yet. The public endpoints are CORS-friendly, but consumers should still add their own caching and rate-limit handling.

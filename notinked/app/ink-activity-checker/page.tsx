@@ -41,6 +41,9 @@ export default function ActivityCheckerPage() {
         <p className="text-muted text-sm">
           See how active this wallet is across Ink protocols used by farmers.
         </p>
+        <a href="/" className="inline-block text-primary text-xs mt-3 hover:underline">
+          Back to NotInked safety tools
+        </a>
       </div>
 
       <div className="bg-warn/10 border border-warn/40 text-warn text-xs rounded-lg px-4 py-3 mb-8 leading-relaxed">

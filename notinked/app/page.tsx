@@ -43,6 +43,9 @@ export default function Home() {
           </div>
         </div>
         <p className="text-muted text-sm">Check before you get inked.</p>
+        <a href="/ink-activity-checker" className="inline-block text-primary text-xs mt-3 hover:underline">
+          Check INK farmer activity
+        </a>
       </div>
 
       <div className="flex gap-1 mb-8 bg-ink2 rounded-lg p-1">
