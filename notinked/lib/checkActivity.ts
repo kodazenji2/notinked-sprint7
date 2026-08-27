@@ -19,13 +19,15 @@ import { isAddress } from "viem";
 
 const EXPLORER_BASE = "https://explorer.inkonchain.com/api/v2";
 
-// TODO: confirm Nado and Tydro's actual contract addresses (from their
-// own docs or verified contracts on Ink's explorer) to enable
-// protocol-specific interaction counts. Left as an empty, clearly-labeled
-// gap rather than a guess.
 const KNOWN_PROTOCOLS: Record<string, string> = {
-  // "0x...": "Nado",
-  // "0x...": "Tydro",
+  // Nado mainnet contracts from the official deployment documentation.
+  "0xd218103918c19d0a10cf35300e4cfafbd444c5fe": "Nado",
+  "0xf8599d58d1137fc56ecdd9c16ee139c8bdf96da1": "Nado",
+  "0xfcd94770b95fd9cc67143132bb172eb17a0907fe": "Nado",
+  "0x05ec92d78ed421f3d3ada77ffde167106565974e": "Nado",
+  "0x68798229f88251b31d534733d6c4098318c9dff8": "Nado",
+  // TydroInkPoints token address from the supplied project brief.
+  "0x40abd730cc9da34a8ee9823feabdba35e50c4ac7": "Tydro",
 };
 
 export interface ActivityCheckResult {

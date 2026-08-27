@@ -37,13 +37,10 @@ export default function ActivityCheckerPage() {
         <div className="text-primary text-xs font-mono tracking-widest uppercase mb-3">
           Ink Chain · Unofficial
         </div>
-        <h1 className="text-3xl font-bold mb-2">Activity Tracker</h1>
+        <h1 className="text-3xl font-bold mb-2">INK Farmer Activity</h1>
         <p className="text-muted text-sm">
-          See how active this wallet is for the $INK airdrop — not an official points calculator.
+          See how active this wallet is across Ink protocols used by farmers.
         </p>
-        <Link href="/" className="inline-block text-primary text-xs mt-3 hover:underline">
-          ← Back to NotInked safety tools
-        </Link>
       </div>
 
       <div className="bg-warn/10 border border-warn/40 text-warn text-xs rounded-lg px-4 py-3 mb-8 leading-relaxed">
@@ -107,8 +104,7 @@ export default function ActivityCheckerPage() {
             </div>
           ) : (
             <div className="text-xs text-muted text-center py-4">
-              Protocol-specific breakdown (Nado/Tydro) not yet available — their exact
-              contract addresses haven't been wired in yet.
+              No Nado or Tydro interactions were found in the indexed transaction history.
             </div>
           )}
 
