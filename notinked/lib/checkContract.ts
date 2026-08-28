@@ -254,12 +254,22 @@ async function checkContractUncached(addressInput: string): Promise<ContractChec
     const EIP1967_IMPLEMENTATION_SLOT = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bb" as const;
     const EIP1967_BEACON_SLOT = "0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d5" as const;
     const GNOSIS_SAFE_SINGLETON_SLOT = `0x${"0".repeat(64)}` as `0x${string}`;
+    // Pre-EIP-1967 OpenZeppelin/zOS AdminUpgradeabilityProxy pattern —
+    // an older standard with DIFFERENT slot hashes than EIP-1967, still
+    // in real use today (confirmed via live testing: this is the
+    // pattern behind Circle's FiatTokenProxy / USDC, among others).
+    // keccak256("org.zeppelinos.proxy.implementation") and
+    // keccak256("org.zeppelinos.proxy.admin") respectively.
+    const LEGACY_ZOS_IMPLEMENTATION_SLOT = "0x7050c9e0f4ca769c69bd3a8ef740bc37934f800c70a5a68e2e2f0c31c1f9ed1" as const;
+    const LEGACY_ZOS_ADMIN_SLOT = "0x10d6a54a4754c8869d6886b5f5d7fbfa5b4522237ea5c60d11bc4e7a1ff9390b" as const;
 
     const SLOT_REGISTRY: Array<{ label: string; slot: `0x${string}`; role: "admin" | "implementation" | "beacon" }> = [
       { label: "EIP-1967 admin", slot: EIP1967_ADMIN_SLOT, role: "admin" },
       { label: "EIP-1967 implementation", slot: EIP1967_IMPLEMENTATION_SLOT, role: "implementation" },
       { label: "EIP-1967 beacon", slot: EIP1967_BEACON_SLOT, role: "beacon" },
       { label: "Gnosis Safe singleton", slot: GNOSIS_SAFE_SINGLETON_SLOT, role: "implementation" },
+      { label: "Legacy zOS admin", slot: LEGACY_ZOS_ADMIN_SLOT, role: "admin" },
+      { label: "Legacy zOS implementation", slot: LEGACY_ZOS_IMPLEMENTATION_SLOT, role: "implementation" },
     ];
 
     let slotReadFailures = 0;
