@@ -2,31 +2,58 @@
 
 import { useState } from "react";
 import type { ActivityCheckResult } from "../../lib/checkActivity";
+import type { NadoPointsResult } from "../../lib/checkNadoActivity";
 
 export default function ActivityCheckerPage() {
   const [wallet, setWallet] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<ActivityCheckResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [nadoResult, setNadoResult] = useState<NadoPointsResult | null>(null);
+  const [nadoError, setNadoError] = useState<string | null>(null);
 
   async function handleCheck() {
     setLoading(true);
     setError(null);
     setResult(null);
+    setNadoResult(null);
+    setNadoError(null);
+
+    const activityPromise = fetch("/api/activity-check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ wallet }),
+    });
+    const nadoPromise = fetch("/api/nado-check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ wallet }),
+    });
+
     try {
-      const res = await fetch("/api/activity-check", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ wallet }),
-      });
+      const res = await activityPromise;
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Check failed");
       setResult(data);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Something went wrong");
-    } finally {
-      setLoading(false);
     }
+
+    // Runs independently — a wallet with no Nado activity isn't an
+    // error, and a Nado outage shouldn't block the main activity result.
+    try {
+      const nadoRes = await nadoPromise;
+      const nadoData = await nadoRes.json();
+      if (nadoRes.ok) {
+        setNadoResult(nadoData);
+      } else {
+        setNadoError(nadoData.error || "Could not reach Nado's API");
+      }
+    } catch (e) {
+      setNadoError(e instanceof Error ? e.message : "Could not reach Nado's API");
+    }
+
+    setLoading(false);
   }
 
   const protocolEntries = result ? Object.entries(result.protocolInteractions) : [];
@@ -117,9 +144,95 @@ export default function ActivityCheckerPage() {
               the full total.
             </div>
           )}
+
+          {nadoError && (
+            <div className="text-xs text-muted text-center mt-4">
+              Nado points check unavailable: {nadoError}
+            </div>
+          )}
+
+          {nadoResult && <NadoSection nado={nadoResult} />}
         </div>
       )}
     </main>
+  );
+}
+
+function NadoSection({ nado }: { nado: NadoPointsResult }) {
+  const [simulatedVolume, setSimulatedVolume] = useState(50_000);
+  const [protocolVolume, setProtocolVolume] = useState(20_000_000);
+
+  // Rough client-side mirror of estimateNadoPointsShare from
+  // lib/checkNadoActivity.ts — kept in the UI so the slider updates
+  // instantly without a round-trip per drag.
+  const POOL_FLOOR = 300_000;
+  const POOL_CAP = 950_000;
+  const scaleFactor = Math.min(1, Math.sqrt(protocolVolume / 50_000_000));
+  const estimatedPool = POOL_FLOOR + (POOL_CAP - POOL_FLOOR) * scaleFactor;
+  const weeklyProtocolVolume = protocolVolume * 7;
+  const roughShare = weeklyProtocolVolume > 0
+    ? (simulatedVolume / (weeklyProtocolVolume + simulatedVolume)) * estimatedPool
+    : 0;
+
+  return (
+    <div className="mt-6">
+      <div className="text-xs text-muted uppercase tracking-wide mb-2">Nado</div>
+
+      {nado.hasNadoActivity ? (
+        <div className="grid grid-cols-2 gap-3 mb-4">
+          <Stat label="Current epoch points" value={nado.currentEpochPoints?.toString() ?? "—"} />
+          <Stat label="All-time points" value={nado.allTimePoints?.toString() ?? "—"} />
+          <Stat label="Rank" value={nado.rank ? `#${nado.rank}` : "—"} />
+          <Stat label="Tier" value={nado.tier ?? "—"} />
+        </div>
+      ) : (
+        <div className="text-sm text-muted mb-4">No Nado trading activity found for this wallet.</div>
+      )}
+
+      <div className="bg-ink2 border border-white/10 rounded-lg p-4">
+        <div className="text-xs text-muted uppercase tracking-wide mb-1">Rough Points Estimator</div>
+        <p className="text-xs text-muted mb-4 leading-relaxed">
+          Nado's exact scoring formula (fee tier, anti-wash-trading adjustments, real relative
+          share) is intentionally undisclosed. This slider only models the ONE publicly
+          documented mechanic, the weekly pool scaling from 300K toward 950K points as
+          protocol volume rises while using simplified math. Treat this as directional intuition
+          only, not a prediction.
+        </p>
+
+        <label className="block text-xs text-muted mb-1">
+          Your simulated weekly volume: ${simulatedVolume.toLocaleString()}
+        </label>
+        <input
+          type="range"
+          min={0}
+          max={2_000_000}
+          step={10_000}
+          value={simulatedVolume}
+          onChange={(e) => setSimulatedVolume(Number(e.target.value))}
+          className="w-full mb-4 accent-primary"
+        />
+
+        <label className="block text-xs text-muted mb-1">
+          Estimated protocol-wide avg daily volume: ${protocolVolume.toLocaleString()}
+        </label>
+        <input
+          type="range"
+          min={1_000_000}
+          max={200_000_000}
+          step={1_000_000}
+          value={protocolVolume}
+          onChange={(e) => setProtocolVolume(Number(e.target.value))}
+          className="w-full mb-4 accent-primary"
+        />
+
+        <div className="flex justify-between items-center pt-3 border-t border-white/10">
+          <span className="text-xs text-muted">Rough estimated weekly share</span>
+          <span className="text-lg font-bold font-mono">
+            ~{roughShare.toLocaleString(undefined, { maximumFractionDigits: 0 })} pts
+          </span>
+        </div>
+      </div>
+    </div>
   );
 }
 
