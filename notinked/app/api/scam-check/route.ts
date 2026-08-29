@@ -3,6 +3,18 @@ import { checkMessageForScam, extractAddresses } from "@/lib/groqClient";
 import { checkContract, type ContractCheckResult } from "@/lib/checkContract";
 import { checkAndIncrement } from "@/lib/rateLimit";
 
+function getClientIp(req: NextRequest): string {
+  const forwarded = req.headers.get("x-forwarded-for") ?? "";
+  const realIp = req.headers.get("x-real-ip") ?? "";
+  const cloudflare = req.headers.get("cf-connecting-ip") ?? "";
+
+  const candidate = [forwarded, realIp, cloudflare]
+    .flatMap((value) => value.split(",").map((part) => part.trim()))
+    .find((value) => value.length > 0);
+
+  return candidate ?? "anonymous";
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { text, identifier, isPremium } = await req.json();
@@ -11,10 +23,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing message text" }, { status: 400 });
     }
 
-    // `identifier` should be a stable per-user value — wallet address once
-    // wallet-signature auth is added. Falling back to a placeholder here so
-    // the route works before auth exists; replace before shipping.
-    const id = typeof identifier === "string" && identifier ? identifier : "anonymous";
+    const ip = getClientIp(req);
+    const walletLike = typeof identifier === "string" && /^0x[a-fA-F0-9]{40}$/.test(identifier.trim());
+    const id = walletLike ? identifier.trim().toLowerCase() : ip;
 
     const limit = await checkAndIncrement(id, Boolean(isPremium));
 

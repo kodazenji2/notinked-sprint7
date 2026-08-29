@@ -116,7 +116,8 @@ Open http://localhost:3000
 ## Rate limiting (Sprint 2)
 - Free: 5 checks/day per identifier, resets at UTC midnight
 - Premium: 100/day (placeholder for "unlimited") — gated behind an `isPremium` flag that nothing sets yet
-- Current identifier is hardcoded to `"anonymous"` in the UI — every visitor shares one bucket until wallet-signature auth is added. Fine for local testing, not for launch.
+- The app now falls back to the client IP as the limiter identity when no wallet address is provided, so unauthenticated users are separated by IP instead of sharing one global `anonymous` bucket.
+- Wallet addresses are still accepted when present, but the app no longer requires a wallet connection to enforce a per-user limit.
 - Storage now persists in Upstash Redis via `lib/rateLimit.ts`, `lib/cache.ts`, and `lib/riskRegistry.ts`, so registry entries, TTL cache values, and daily limits survive deploys and cold starts instead of resetting on every restart.
 
 ## Stack
