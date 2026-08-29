@@ -2,13 +2,7 @@ import { createPublicClient, http, isAddress, type Address } from "viem";
 import { autoFlagIfRisky, isKnownRisk } from "./riskRegistry";
 import { checkContract, type ContractCheckResult } from "./checkContract";
 
-/**
- * Ink mainnet config.
- *
- * Multicall3 (0xcA11bde...) is confirmed deployed on Ink at the standard
- * address — added explicitly since viem's default Ink config doesn't
- * include it yet.
- */
+
 const MULTICALL3_ADDRESS =
   "0xcA11bde05977b3631167028862bE2a173976CA11" as const;
 
@@ -381,9 +375,8 @@ async function discoverApprovalLogs(
 
     const coverage = reachedChainStart
       ? "full history"
-      : `partial history only — last ~${
-          FALLBACK_MAX_CHUNKS * Number(FALLBACK_CHUNK_SIZE)
-        } blocks`;
+      : `partial history only — last ~${FALLBACK_MAX_CHUNKS * Number(FALLBACK_CHUNK_SIZE)
+      } blocks`;
 
     return {
       logs,
@@ -527,7 +520,7 @@ export async function scanWalletApprovals(
         const isUnlimited =
           currentAllowance >= UNLIMITED_THRESHOLD;
 
-        const riskEntry = isKnownRisk(pair.spender);
+        const riskEntry = await isKnownRisk(pair.spender);
         const isKnownRiskFlag = Boolean(riskEntry);
 
         let risk: ApprovalRisk = "green";
@@ -627,10 +620,10 @@ export async function scanWalletApprovals(
 
       const risk: ApprovalRisk =
         contractCheck.risk === "red" ||
-        approval.risk === "red"
+          approval.risk === "red"
           ? "red"
           : contractCheck.risk === "yellow" ||
-              approval.risk === "yellow"
+            approval.risk === "yellow"
             ? "yellow"
             : "green";
 
@@ -644,7 +637,7 @@ export async function scanWalletApprovals(
       };
 
       if (risk !== "green") {
-        autoFlagIfRisky(
+        await autoFlagIfRisky(
           approval.spender,
           risk,
           reasons
@@ -712,11 +705,11 @@ export async function scanWalletApprovals(
       );
 
     const registryHit =
-      isKnownRisk(operator);
+      await isKnownRisk(operator);
 
     const risk: ApprovalRisk =
       registryHit ||
-      contractCheck?.risk === "red"
+        contractCheck?.risk === "red"
         ? "red"
         : contractCheck?.risk === "yellow"
           ? "yellow"
@@ -736,7 +729,7 @@ export async function scanWalletApprovals(
       approved,
       isKnownRisk: Boolean(
         registryHit ||
-          contractCheck?.isKnownRisk
+        contractCheck?.isKnownRisk
       ),
       risk,
       reason,

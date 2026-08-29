@@ -16,7 +16,7 @@ Wallet safety checker for Ink chain (Kraken's L2). "Check before you get inked."
 - Paste a DM, airdrop offer, or link
 - Sent to **Groq** (free tier, `openai/gpt-oss-20b`) with a scam-pattern prompt (urgency language, fake support impersonation, seed-phrase requests, unrealistic yield claims)
 - Returns a risk score + what triggered it
-- Rate-limited to **5 free checks/day** per user (in-memory for MVP — see `lib/rateLimit.ts` for the production swap-out)
+- Rate-limited to **5 free checks/day** per user, backed by Upstash Redis so the counter survives deploys and cold starts
 - Added as a second tab in the same UI — Sprint 1 keeps working untouched
 
 **Definition of done:** paste text, get a risk score + explanation, capped at 5/day free. ✅ Done in this scaffold.
@@ -117,7 +117,7 @@ Open http://localhost:3000
 - Free: 5 checks/day per identifier, resets at UTC midnight
 - Premium: 100/day (placeholder for "unlimited") — gated behind an `isPremium` flag that nothing sets yet
 - Current identifier is hardcoded to `"anonymous"` in the UI — every visitor shares one bucket until wallet-signature auth is added. Fine for local testing, not for launch.
-- Storage is an in-memory `Map` (`lib/rateLimit.ts`) — resets on server restart, doesn't work across multiple instances. Swap for Redis (Upstash free tier fits this) or a Postgres table before deploying for real.
+- Storage now persists in Upstash Redis via `lib/rateLimit.ts`, `lib/cache.ts`, and `lib/riskRegistry.ts`, so registry entries, TTL cache values, and daily limits survive deploys and cold starts instead of resetting on every restart.
 
 ## Stack
 - Next.js 16 (App Router)

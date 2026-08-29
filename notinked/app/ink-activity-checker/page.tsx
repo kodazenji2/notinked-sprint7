@@ -37,12 +37,12 @@ export default function ActivityCheckerPage() {
         <div className="text-primary text-xs font-mono tracking-widest uppercase mb-3">
           Ink Chain · Unofficial
         </div>
-        <h1 className="text-3xl font-bold mb-2">INK Farmer Activity</h1>
+        <h1 className="text-3xl font-bold mb-2">INK Wallet Activity</h1>
         <p className="text-muted text-sm">
           See how active this wallet is across Ink protocols used by farmers.
         </p>
         <a href="/" className="inline-block text-primary text-xs mt-3 hover:underline">
-          Back to NotInked safety tools
+          Check out NotInked safety tools
         </a>
       </div>
 

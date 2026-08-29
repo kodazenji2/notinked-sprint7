@@ -1,83 +1,65 @@
-/**
- * MVP rate limiter — in-memory Map, resets daily.
- *
- * ⚠️ This resets on server restart and won't work across multiple server
- * instances. Before real deployment, swap the Map for Redis (Upstash has a
- * free tier that fits this exactly) or a Postgres table with a
- * (user_id, date) unique key. The interface below (`checkAndIncrement`)
- * is designed to stay the same when you make that swap.
- */
+import { Ratelimit } from "@upstash/ratelimit";
+import { redis } from "./redisClient";
 
 const FREE_DAILY_LIMIT = 5;
-const PREMIUM_DAILY_LIMIT = 100; // effectively unlimited for normal use
+const PREMIUM_DAILY_LIMIT = 100;
 
-interface UsageRecord {
-  date: string; // YYYY-MM-DD, UTC
-  count: number;
-}
+const FREE_LIMITER = new Ratelimit({
+  redis,
+  limiter: Ratelimit.fixedWindow(FREE_DAILY_LIMIT, "1 d"),
+  prefix: "notinked:free-rate-limit",
+  analytics: false,
+  ephemeralCache: false,
+});
 
-const usageStore = new Map<string, UsageRecord>();
-
-function todayUTC(): string {
-  return new Date().toISOString().slice(0, 10);
-}
+const PREMIUM_LIMITER = new Ratelimit({
+  redis,
+  limiter: Ratelimit.fixedWindow(PREMIUM_DAILY_LIMIT, "1 d"),
+  prefix: "notinked:premium-rate-limit",
+  analytics: false,
+  ephemeralCache: false,
+});
 
 export interface RateLimitResult {
   allowed: boolean;
   remaining: number;
   limit: number;
-  resetsAt: string; // ISO timestamp of next UTC midnight
+  resetsAt: string;
 }
 
-function nextMidnightUTC(): string {
-  const now = new Date();
-  const next = new Date(
-    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1)
-  );
-  return next.toISOString();
+function normalizeIdentifier(identifier: string): string {
+  return (identifier || "anonymous").trim().toLowerCase();
 }
 
-/**
- * Checks whether `identifier` (wallet address, account id, etc.) can make
- * another request today, and increments their count if so.
- */
-export function checkAndIncrement(
+function toIsoReset(resetMs: number): string {
+  return new Date(resetMs).toISOString();
+}
+
+export async function checkAndIncrement(
   identifier: string,
   isPremium: boolean
-): RateLimitResult {
-  const limit = isPremium ? PREMIUM_DAILY_LIMIT : FREE_DAILY_LIMIT;
-  const today = todayUTC();
-  const key = identifier.toLowerCase();
-
-  const existing = usageStore.get(key);
-  const current = existing && existing.date === today ? existing.count : 0;
-
-  if (current >= limit) {
-    return { allowed: false, remaining: 0, limit, resetsAt: nextMidnightUTC() };
-  }
-
-  usageStore.set(key, { date: today, count: current + 1 });
+): Promise<RateLimitResult> {
+  const limiter = isPremium ? PREMIUM_LIMITER : FREE_LIMITER;
+  const key = normalizeIdentifier(identifier);
+  const result = await limiter.limit(key);
 
   return {
-    allowed: true,
-    remaining: limit - (current + 1),
-    limit,
-    resetsAt: nextMidnightUTC(),
+    allowed: result.success,
+    remaining: Math.max(0, result.remaining),
+    limit: result.limit,
+    resetsAt: toIsoReset(result.reset),
   };
 }
 
-/** Read-only check, does not increment. Useful for showing remaining count in UI. */
-export function getUsage(identifier: string, isPremium: boolean): RateLimitResult {
-  const limit = isPremium ? PREMIUM_DAILY_LIMIT : FREE_DAILY_LIMIT;
-  const today = todayUTC();
-  const key = identifier.toLowerCase();
-  const existing = usageStore.get(key);
-  const current = existing && existing.date === today ? existing.count : 0;
+export async function getUsage(identifier: string, isPremium: boolean): Promise<RateLimitResult> {
+  const limiter = isPremium ? PREMIUM_LIMITER : FREE_LIMITER;
+  const key = normalizeIdentifier(identifier);
+  const remaining = await limiter.getRemaining(key);
 
   return {
-    allowed: current < limit,
-    remaining: Math.max(0, limit - current),
-    limit,
-    resetsAt: nextMidnightUTC(),
+    allowed: remaining.remaining > 0,
+    remaining: Math.max(0, remaining.remaining),
+    limit: remaining.limit,
+    resetsAt: toIsoReset(remaining.reset),
   };
 }

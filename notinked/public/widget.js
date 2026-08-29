@@ -1,10 +1,7 @@
 /**
  * NotInked embeddable risk badge.
  *
- * Usage on any site (Tydro, Nado, or anyone else):
- *
- *   <div data-notinked-address="0x..."></div>
- *   <script src="https://YOUR_DEPLOYED_DOMAIN/widget.js"></script>
+ 
  *
  * Finds every element with a data-notinked-address attribute, calls the
  * public risk-check API, and renders a small inline badge. No build step,

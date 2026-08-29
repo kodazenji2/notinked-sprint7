@@ -16,7 +16,7 @@ export async function POST(req: NextRequest) {
     // the route works before auth exists; replace before shipping.
     const id = typeof identifier === "string" && identifier ? identifier : "anonymous";
 
-    const limit = checkAndIncrement(id, Boolean(isPremium));
+    const limit = await checkAndIncrement(id, Boolean(isPremium));
 
     if (!limit.allowed) {
       return NextResponse.json(

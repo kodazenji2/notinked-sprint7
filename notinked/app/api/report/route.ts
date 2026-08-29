@@ -32,7 +32,7 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error: "A reason is required" }, { status: 400 });
     }
 
-    const entry = addRiskEntry({
+    const entry = await addRiskEntry({
         address: body.address as Address,
         category: body.category ?? "other",
         reason: body.reason.trim(),

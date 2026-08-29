@@ -10,11 +10,6 @@ import { isAddress } from "viem";
  * unpublished. This shows verifiable on-chain facts only — treat it as
  * informational, not a guarantee of any allocation.
  *
- * Runs server-side (this file, via the API route) rather than
- * client-side like the original standalone HTML version — that version
- * hit the browser's CORS restrictions calling Blockscout directly,
- * which is the likely cause of the identical-results bug seen there.
- * Server-side fetches aren't subject to CORS.
  */
 
 const EXPLORER_BASE = "https://explorer.inkonchain.com/api/v2";

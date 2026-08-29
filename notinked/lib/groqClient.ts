@@ -1,9 +1,4 @@
-/**
- * Groq client — plain fetch, no SDK dependency needed (Groq's API is
- * OpenAI-compatible). Uses the free tier by default (llama-3.1-8b-instant).
- *
- * Requires GROQ_API_KEY in .env.local — get one at console.groq.com
- */
+
 
 const GROQ_ENDPOINT = "https://api.groq.com/openai/v1/chat/completions";
 const MODEL = "openai/gpt-oss-20b"; // llama-3.1-8b-instant was deprecated & shut down by Groq Aug 16 2026

@@ -101,7 +101,7 @@ async function checkContractUncached(addressInput: string): Promise<ContractChec
   const reasons: string[] = [];
 
   // 1. Check our own open risk registry first (cheap, no network call)
-  const registryHit = isKnownRisk(address);
+  const registryHit = await isKnownRisk(address);
   if (registryHit) {
     return {
       address,
@@ -312,7 +312,7 @@ async function checkContractUncached(addressInput: string): Promise<ContractChec
     reasons.push("No red flags found in verification status or deployment age.");
   }
 
-  if (risk !== "green") autoFlagIfRisky(address, risk, reasons);
+  if (risk !== "green") await autoFlagIfRisky(address, risk, reasons);
 
   return {
     address,

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { RISK_REGISTRY, REGISTRY_VERSION } from "@/lib/riskRegistry";
+import { listRiskEntries, REGISTRY_VERSION } from "@/lib/riskRegistry";
 
 /**
  * Public, open risk registry — the piece other Ink builders (Tydro, Nado,
@@ -10,11 +10,13 @@ import { RISK_REGISTRY, REGISTRY_VERSION } from "@/lib/riskRegistry";
  * infrastructure. CORS is open for the same reason.
  */
 export async function GET() {
+  const entries = await listRiskEntries();
+
   const res = NextResponse.json({
     version: REGISTRY_VERSION,
-    updatedEntryCount: RISK_REGISTRY.length,
+    updatedEntryCount: entries.length,
     source: "NotInked — open risk registry for Ink chain",
-    entries: RISK_REGISTRY,
+    entries,
   });
 
   res.headers.set("Access-Control-Allow-Origin", "*");
