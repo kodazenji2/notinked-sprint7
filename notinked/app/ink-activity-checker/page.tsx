@@ -37,9 +37,9 @@ export default function ActivityCheckerPage() {
         <div className="text-primary text-xs font-mono tracking-widest uppercase mb-3">
           Ink Chain · Unofficial
         </div>
-        <h1 className="text-3xl font-bold mb-2">INK Wallet Activity</h1>
+        <h1 className="text-3xl font-bold mb-2">Wallet Activity</h1>
         <p className="text-muted text-sm">
-          See how active this wallet is across Ink protocols used by farmers.
+          See how active this wallet is across Inkonchain's protocols used by farmers.
         </p>
         <a href="/" className="inline-block text-primary text-xs mt-3 hover:underline">
           Check out NotInked safety tools
@@ -47,7 +47,7 @@ export default function ActivityCheckerPage() {
       </div>
 
       <div className="bg-warn/10 border border-warn/40 text-warn text-xs rounded-lg px-4 py-3 mb-8 leading-relaxed">
-        This shows verifiable on-chain activity, NOT official INK points. Only Kraken Pro
+        This shows verifiable on-chain activity, NOT official $INK points. Only Kraken Pro
         trading is a confirmed points source as of this writing. Nado and Tydro activity are
         confirmed airdrop-eligibility categories, but exact weighting is unpublished. Treat
         this as informational, not a guarantee of any allocation.
