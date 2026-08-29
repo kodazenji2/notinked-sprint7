@@ -502,55 +502,57 @@ export async function scanWalletApprovals(
       allowFailure: true,
     });
 
-    rawApprovals = pairList
-      .map((pair, i) => {
-        const result = multicallResults[i];
+    rawApprovals = (
+      await Promise.all(
+        pairList.map(async (pair, i) => {
+          const result = multicallResults[i];
 
-        if (result.status !== "success") {
-          return null;
-        }
+          if (result.status !== "success") {
+            return null;
+          }
 
-        const currentAllowance = result.result as bigint;
+          const currentAllowance = result.result as bigint;
 
-        // Fully revoked or fully spent.
-        if (currentAllowance === 0n) {
-          return null;
-        }
+          // Fully revoked or fully spent.
+          if (currentAllowance === 0n) {
+            return null;
+          }
 
-        const isUnlimited =
-          currentAllowance >= UNLIMITED_THRESHOLD;
+          const isUnlimited =
+            currentAllowance >= UNLIMITED_THRESHOLD;
 
-        const riskEntry = await isKnownRisk(pair.spender);
-        const isKnownRiskFlag = Boolean(riskEntry);
+          const riskEntry = await isKnownRisk(pair.spender);
+          const isKnownRiskFlag = Boolean(riskEntry);
 
-        let risk: ApprovalRisk = "green";
-        let reason =
-          "Limited approval to an unflagged address.";
+          let risk: ApprovalRisk = "green";
+          let reason =
+            "Limited approval to an unflagged address.";
 
-        if (isKnownRiskFlag) {
-          risk = "red";
-          reason = riskEntry!.reason;
-        } else if (isUnlimited) {
-          risk = "yellow";
-          reason =
-            "Unlimited approval — this contract can move your full token balance at any time.";
-        }
+          if (isKnownRiskFlag) {
+            risk = "red";
+            reason = riskEntry!.reason;
+          } else if (isUnlimited) {
+            risk = "yellow";
+            reason =
+              "Unlimited approval — this contract can move your full token balance at any time.";
+          }
 
-        return {
-          spender: pair.spender,
-          tokenAddress: pair.tokenAddress,
-          currentAllowance: currentAllowance.toString(),
-          isUnlimited,
-          isKnownRisk: isKnownRiskFlag,
-          risk,
-          reason,
-          lastApprovalTxHash: pair.lastTxHash,
-          lastApprovalBlock: pair.lastBlock,
-        };
-      })
-      .filter(
-        (a): a is ApprovalResult => a !== null
-      );
+          return {
+            spender: pair.spender,
+            tokenAddress: pair.tokenAddress,
+            currentAllowance: currentAllowance.toString(),
+            isUnlimited,
+            isKnownRisk: isKnownRiskFlag,
+            risk,
+            reason,
+            lastApprovalTxHash: pair.lastTxHash,
+            lastApprovalBlock: pair.lastBlock,
+          };
+        })
+      )
+    ).filter(
+      (a): a is ApprovalResult => a !== null
+    );
   }
 
   // ------------------------------------------------------------
@@ -600,61 +602,63 @@ export async function scanWalletApprovals(
   // Enrich ERC20 approvals with contract risk.
   // ------------------------------------------------------------
 
-  const approvals = rawApprovals
-    .map((approval) => {
-      const contractCheck =
-        contractChecks.get(
-          approval.spender.toLowerCase()
-        );
+  const approvals = (
+    await Promise.all(
+      rawApprovals.map(async (approval) => {
+        const contractCheck =
+          contractChecks.get(
+            approval.spender.toLowerCase()
+          );
 
-      if (!contractCheck) {
-        return approval;
-      }
+        if (!contractCheck) {
+          return approval;
+        }
 
-      const reasons = [
-        ...new Set([
-          ...contractCheck.reasons,
-          approval.reason,
-        ]),
-      ];
+        const reasons = [
+          ...new Set([
+            ...contractCheck.reasons,
+            approval.reason,
+          ]),
+        ];
 
-      const risk: ApprovalRisk =
-        contractCheck.risk === "red" ||
-          approval.risk === "red"
-          ? "red"
-          : contractCheck.risk === "yellow" ||
-            approval.risk === "yellow"
-            ? "yellow"
-            : "green";
+        const risk: ApprovalRisk =
+          contractCheck.risk === "red" ||
+            approval.risk === "red"
+            ? "red"
+            : contractCheck.risk === "yellow" ||
+              approval.risk === "yellow"
+              ? "yellow"
+              : "green";
 
-      const enriched = {
-        ...approval,
-        risk,
-        isKnownRisk:
-          approval.isKnownRisk ||
-          contractCheck.isKnownRisk,
-        reason: reasons.join(" "),
-      };
-
-      if (risk !== "green") {
-        await autoFlagIfRisky(
-          approval.spender,
+        const enriched = {
+          ...approval,
           risk,
-          reasons
-        );
-      }
+          isKnownRisk:
+            approval.isKnownRisk ||
+            contractCheck.isKnownRisk,
+          reason: reasons.join(" "),
+        };
 
-      return enriched;
-    })
-    .sort((a, b) => {
-      const order = {
-        red: 0,
-        yellow: 1,
-        green: 2,
-      };
+        if (risk !== "green") {
+          await autoFlagIfRisky(
+            approval.spender,
+            risk,
+            reasons
+          );
+        }
 
-      return order[a.risk] - order[b.risk];
-    });
+        return enriched;
+      })
+    )
+  ).sort((a, b) => {
+    const order = {
+      red: 0,
+      yellow: 1,
+      green: 2,
+    };
+
+    return order[a.risk] - order[b.risk];
+  });
 
   // ------------------------------------------------------------
   // STEP 6: NFT APPROVAL SCAN
