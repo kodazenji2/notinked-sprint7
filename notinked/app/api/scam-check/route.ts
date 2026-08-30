@@ -2,32 +2,30 @@ import { NextRequest, NextResponse } from "next/server";
 import { checkMessageForScam, extractAddresses } from "@/lib/groqClient";
 import { checkContract, type ContractCheckResult } from "@/lib/checkContract";
 import { checkAndIncrement } from "@/lib/rateLimit";
-
-function getClientIp(req: NextRequest): string {
-  const forwarded = req.headers.get("x-forwarded-for") ?? "";
-  const realIp = req.headers.get("x-real-ip") ?? "";
-  const cloudflare = req.headers.get("cf-connecting-ip") ?? "";
-
-  const candidate = [forwarded, realIp, cloudflare]
-    .flatMap((value) => value.split(",").map((part) => part.trim()))
-    .find((value) => value.length > 0);
-
-  return candidate ?? "anonymous";
-}
+import { getOrCreateSession } from "@/lib/session";
 
 export async function POST(req: NextRequest) {
   try {
-    const { text, identifier, isPremium } = await req.json();
+    const { text, identifier, sessionId, isPremium } = await req.json();
 
     if (!text || typeof text !== "string" || text.trim().length === 0) {
       return NextResponse.json({ error: "Missing message text" }, { status: 400 });
     }
 
-    const ip = getClientIp(req);
+    // Prefer wallet address if valid, otherwise use session-based limiting
     const walletLike = typeof identifier === "string" && /^0x[a-fA-F0-9]{40}$/.test(identifier.trim());
-    const id = walletLike ? identifier.trim().toLowerCase() : ip;
+    let limiterId: string;
+    let responseSessionId: string | undefined;
 
-    const limit = await checkAndIncrement(id, Boolean(isPremium));
+    if (walletLike) {
+      limiterId = identifier.trim().toLowerCase();
+    } else {
+      const session = await getOrCreateSession(sessionId);
+      limiterId = session.id;
+      responseSessionId = session.id;
+    }
+
+    const limit = await checkAndIncrement(limiterId, Boolean(isPremium));
 
     if (!limit.allowed) {
       return NextResponse.json(
@@ -35,6 +33,7 @@ export async function POST(req: NextRequest) {
           error: "Daily check limit reached",
           limit: limit.limit,
           resetsAt: limit.resetsAt,
+          ...(responseSessionId && { sessionId: responseSessionId }),
         },
         { status: 429 }
       );
@@ -60,6 +59,7 @@ export async function POST(req: NextRequest) {
       remaining: limit.remaining,
       limit: limit.limit,
       resetsAt: limit.resetsAt,
+      ...(responseSessionId && { sessionId: responseSessionId }),
     });
   } catch (err) {
     const message = err instanceof Error ? err.message : "Scam check failed";

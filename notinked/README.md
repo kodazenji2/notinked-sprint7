@@ -114,11 +114,12 @@ npm run dev
 Open http://localhost:3000
 
 ## Rate limiting (Sprint 2)
-- Free: 5 checks/day per identifier, resets at UTC midnight
+- Free: 5 checks/day per session, resets at UTC midnight
 - Premium: 100/day (placeholder for "unlimited") — gated behind an `isPremium` flag that nothing sets yet
-- The app now falls back to the client IP as the limiter identity when no wallet address is provided, so unauthenticated users are separated by IP instead of sharing one global `anonymous` bucket.
-- Wallet addresses are still accepted when present, but the app no longer requires a wallet connection to enforce a per-user limit.
-- Storage now persists in Upstash Redis via `lib/rateLimit.ts`, `lib/cache.ts`, and `lib/riskRegistry.ts`, so registry entries, TTL cache values, and daily limits survive deploys and cold starts instead of resetting on every restart.
+- Rate limiting is now session-based: each user gets a long-lived session ID that persists for 30 days, ensuring true per-user limiting without requiring wallet connection or being bound to IP address.
+- Wallet addresses are still accepted and take priority over session limiting; if provided, the user is identified by their wallet instead of session.
+- Sessions are stored in Upstash Redis with a 30-day TTL. The client must send the `sessionId` in the request body to reuse their quota across multiple visits.
+- Storage now persists in Upstash Redis via `lib/rateLimit.ts`, `lib/cache.ts`, `lib/riskRegistry.ts`, and `lib/session.ts`, so registry entries, TTL cache values, daily limits, and user sessions survive deploys and cold starts instead of resetting on every restart.
 
 ## Stack
 - Next.js 16 (App Router)
