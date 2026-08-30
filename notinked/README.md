@@ -133,9 +133,32 @@ Open http://localhost:3000
 4. Enriches spenders/operators with the contract checker and returns structured risk results — no wallet connection required, read-only.
 
 ## Current next steps
+- Run `lib/importExternalRisk.ts` to seed the registry with known scams from ScamSniffer's public database
 - Move reporter identities and consensus to persistent storage so it survives restarts and remains resistant to spoofed identities.
 - Add a non-transaction evidence model for ABI, proxy, holder, and message findings.
 - Add broader tests for Blockscout response parsing, approval state reduction, and external API failure cases.
+
+## External Risk Import
+
+One-off script: `lib/importExternalRisk.ts`
+
+Populates the risk registry from trusted external sources. Currently integrated:
+- **ScamSniffer** (github.com/scamsniffer/scam-database): community-maintained list of known scam/drainer addresses
+
+Not integrated:
+- **Chainabuse**: no public API or bulk export currently available; would require manual scraping or direct integration
+- **GoPlus**: confirmed to NOT support Ink (chain ID 57073) — verified against live `/supported_chains` endpoint
+
+How it works:
+1. Fetches the address list from ScamSniffer via GitHub API
+2. For each candidate: checks Ink activity via Blockscout
+3. Skips addresses with zero Ink activity
+4. Runs `checkContract()` on addresses with activity to corroborate risk
+5. Adds confirmed entries (yellow/red risk) and pending entries (green risk despite external flag) to the registry
+6. Logs a detailed summary for manual review before running again
+
+Run manually: `npx ts-node -O '{"module":"commonjs"}' lib/importExternalRisk.ts`
+
 
 ## Embedding
 Add the browser widget to any Ink dashboard:
