@@ -20,24 +20,33 @@ export const RISK_REGISTRY: RiskEntry[] = [];
 const toRiskKey = (address: string): string => `risk:${address.toLowerCase()}`;
 
 export async function clearRiskRegistry(): Promise<void> {
-  const addresses = (await redis.smembers<string>(RISK_INDEX_KEY)) ?? [];
+  const addresses = (await redis.smembers(RISK_INDEX_KEY)) as string[];
 
   if (addresses.length === 0) {
     return;
   }
 
   const keys = addresses.map((address) => toRiskKey(address));
+
   if (keys.length > 0) {
     await redis.del(...keys, RISK_INDEX_KEY);
   }
 }
 
 export async function listRiskEntries(): Promise<RiskEntry[]> {
-  const addresses = (await redis.smembers<string>(RISK_INDEX_KEY)) ?? [];
-  if (addresses.length === 0) return [];
+  const addresses = (await redis.smembers(RISK_INDEX_KEY)) as string[];
 
-  const entries = await redis.mget<RiskEntry | null>(addresses.map((address) => toRiskKey(address)));
-  return (entries ?? []).filter((entry): entry is RiskEntry => Boolean(entry));
+  if (addresses.length === 0) {
+    return [];
+  }
+
+  const entries = (await redis.mget(
+    addresses.map((address) => toRiskKey(address))
+  )) as Array<RiskEntry | null>;
+
+  return (entries ?? []).filter(
+    (entry): entry is RiskEntry => Boolean(entry)
+  );
 }
 
 export async function addRiskEntry(
@@ -63,8 +72,15 @@ export async function addRiskEntry(
   }
 
   if (existing.status === "pending") {
-    const reporterIds = Array.from(new Set([...(existing.reporterIds ?? []), reporterId]));
+    const reporterIds = Array.from(
+      new Set([
+        ...(existing.reporterIds ?? []),
+        reporterId,
+      ])
+    );
+
     const nextCount = reporterIds.length;
+
     const updated: RiskEntry = {
       ...existing,
       address: normalizedAddress,
@@ -96,19 +112,33 @@ export async function autoFlagIfRisky(
     !/^0x[0-9a-fA-F]{40}$/.test(address) ||
     !txHash ||
     !/^0x[0-9a-fA-F]{64}$/.test(txHash)
-  ) return undefined;
+  ) {
+    return undefined;
+  }
 
-  return addRiskEntry({
-    address: address as Address,
-    category: "other",
-    reason: reasons.join(" ") || `Automatically detected ${risk} risk.`,
-    source: "automated detection",
-    txHash,
-    addedAt: new Date().toISOString(),
-  }, reporterId ?? "automated detection");
+  return addRiskEntry(
+    {
+      address: address as Address,
+      category: "other",
+      reason:
+        reasons.join(" ") ||
+        `Automatically detected ${risk} risk.`,
+      source: "automated detection",
+      txHash,
+      addedAt: new Date().toISOString(),
+    },
+    reporterId ?? "automated detection"
+  );
 }
 
-export async function isKnownRisk(address: string): Promise<RiskEntry | undefined> {
-  const entry = await redis.get<RiskEntry | null>(toRiskKey(address));
-  return entry && entry.status === "confirmed" ? entry : undefined;
+export async function isKnownRisk(
+  address: string
+): Promise<RiskEntry | undefined> {
+  const entry = await redis.get<RiskEntry | null>(
+    toRiskKey(address)
+  );
+
+  return entry && entry.status === "confirmed"
+    ? entry
+    : undefined;
 }
