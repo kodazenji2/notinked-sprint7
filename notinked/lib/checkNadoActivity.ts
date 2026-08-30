@@ -33,19 +33,25 @@ export async function checkNadoPoints(addressInput: string): Promise<NadoPointsR
 
   try {
     const res = await fetch(`${NADO_API_BASE}/nado_points?address=${address}`);
+
+    if (res.status === 404) {
+      // ⚠️ This branch is ambiguous by design right now, and that's a
+      // real problem: a 404 could mean "this wallet has no Nado
+      // activity" OR "this URL/endpoint structure is wrong entirely."
+      // Confirmed via live testing: at least one wallet with verified
+      // real on-chain Nado contract interactions (per checkActivity.ts)
+      // hit this exact branch — meaning the second explanation
+      // (wrong URL) is the more likely one right now, not genuinely
+      // zero activity. Surfacing the raw status/body here instead of
+      // silently returning a clean "no activity" result, so this
+      // doesn't keep masking a URL bug as a data fact.
+      const body = await res.text();
+      throw new Error(
+        `Nado API returned 404 for ${NADO_API_BASE}/nado_points?address=${address} — this may mean the endpoint path is wrong, not that the wallet has no activity. Raw response: ${body.slice(0, 200)}`
+      );
+    }
+
     if (!res.ok) {
-      // A 404 here most likely just means this wallet has never traded
-      // on Nado — treat as "no activity" rather than a hard error.
-      if (res.status === 404) {
-        return {
-          address,
-          hasNadoActivity: false,
-          currentEpochPoints: null,
-          allTimePoints: null,
-          rank: null,
-          tier: null,
-        };
-      }
       throw new Error(`Nado API returned ${res.status}`);
     }
 
