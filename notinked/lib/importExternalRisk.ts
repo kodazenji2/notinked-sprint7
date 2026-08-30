@@ -54,28 +54,43 @@ async function fetchScamSnifferDatabase(): Promise<ScamSnifferAddress[]> {
     );
 
     try {
-        const repoRes = await fetch(
-            "https://api.github.com/repos/scamsniffer/scam-database/contents"
-        );
-        if (!repoRes.ok) {
-            throw new Error(`GitHub API returned ${repoRes.status}`);
+        const candidatePaths = [
+            "https://api.github.com/repos/scamsniffer/scam-database/contents",
+            "https://api.github.com/repos/scamsniffer/scam-database/contents/blacklist",
+        ];
+
+        const files: Array<{ name: string; path: string; type: string }> = [];
+
+        for (const url of candidatePaths) {
+            const repoRes = await fetch(url);
+            if (!repoRes.ok) {
+                continue;
+            }
+
+            const contents = (await repoRes.json()) as Array<{
+                name: string;
+                path: string;
+                type: string;
+            }>;
+
+            for (const item of contents) {
+                if (item.type === "file") {
+                    files.push(item);
+                }
+            }
         }
 
-        const contents = (await repoRes.json()) as Array<{
-            name: string;
-            path: string;
-            type: string;
-        }>;
-
-        const addressFile = contents.find(
+        const addressFile = files.find(
             (f) =>
-                f.type === "file" &&
-                (f.name.includes("address") || f.name.includes("blacklist"))
+                f.name.toLowerCase().includes("address") ||
+                f.name.toLowerCase().includes("blacklist") ||
+                f.name.toLowerCase().includes("combined") ||
+                f.name.toLowerCase().includes("all")
         );
 
         if (!addressFile) {
             summary.notes.push(
-                "ScamSniffer: No address/blacklist file found in repo root"
+                "ScamSniffer: No address/blacklist dataset found in repo root or blacklist directory"
             );
             return [];
         }
@@ -93,31 +108,39 @@ async function fetchScamSnifferDatabase(): Promise<ScamSnifferAddress[]> {
 
         const content = await fileRes.text();
         const candidates: ScamSnifferAddress[] = [];
-        // Try parsing as JSON array first
+        const seen = new Set<string>();
+
         try {
             const json = JSON.parse(content);
-            if (Array.isArray(json)) {
-                for (const item of json) {
-                    if (typeof item === "string" && isAddress(item)) {
+            const items = Array.isArray(json) ? json : [json];
+
+            for (const item of items) {
+                if (typeof item === "string" && isAddress(item)) {
+                    const normalized = item.toLowerCase();
+                    if (!seen.has(normalized)) {
+                        seen.add(normalized);
                         candidates.push({
                             address: item,
                             category: "external-source",
                         });
-                    } else if (
-                        item &&
-                        typeof item === "object" &&
-                        "address" in item &&
-                        isAddress(item.address)
-                    ) {
+                    }
+                } else if (
+                    item &&
+                    typeof item === "object" &&
+                    "address" in item &&
+                    isAddress(String((item as any).address))
+                ) {
+                    const normalized = String((item as any).address).toLowerCase();
+                    if (!seen.has(normalized)) {
+                        seen.add(normalized);
                         candidates.push({
-                            address: item.address,
-                            category: item.category || "external-source",
+                            address: String((item as any).address),
+                            category: String((item as any).category || "external-source"),
                         });
                     }
                 }
             }
         } catch {
-            // Fall back to newline-separated or comma-separated
             const lines = content
                 .split(/[\n,]+/)
                 .map((line) => line.trim())
@@ -125,10 +148,14 @@ async function fetchScamSnifferDatabase(): Promise<ScamSnifferAddress[]> {
 
             for (const line of lines) {
                 if (isAddress(line)) {
-                    candidates.push({
-                        address: line,
-                        category: "external-source",
-                    });
+                    const normalized = line.toLowerCase();
+                    if (!seen.has(normalized)) {
+                        seen.add(normalized);
+                        candidates.push({
+                            address: line,
+                            category: "external-source",
+                        });
+                    }
                 }
             }
         }
