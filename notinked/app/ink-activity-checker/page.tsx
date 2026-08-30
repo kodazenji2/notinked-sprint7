@@ -151,16 +151,27 @@ export default function ActivityCheckerPage() {
             </div>
           )}
 
-          {nadoResult && <NadoSection nado={nadoResult} />}
+          {nadoResult && (
+            <NadoSection
+              nado={nadoResult}
+              onChainNadoInteractions={result?.protocolInteractions?.["Nado"] ?? 0}
+            />
+          )}
         </div>
       )}
     </main>
   );
 }
 
-function NadoSection({ nado }: { nado: NadoPointsResult }) {
-  const [simulatedVolume, setSimulatedVolume] = useState(50_000);
-  const [protocolVolume, setProtocolVolume] = useState(20_000_000);
+function NadoSection({
+  nado,
+  onChainNadoInteractions,
+}: {
+  nado: NadoPointsResult;
+  onChainNadoInteractions: number;
+}) {
+  const [simulatedVolume, setSimulatedVolume] = useState(500);
+  const [protocolVolume, setProtocolVolume] = useState(5_000);
 
   // Rough client-side mirror of estimateNadoPointsShare from
   // lib/checkNadoActivity.ts — kept in the UI so the slider updates
@@ -174,6 +185,19 @@ function NadoSection({ nado }: { nado: NadoPointsResult }) {
     ? (simulatedVolume / (weeklyProtocolVolume + simulatedVolume)) * estimatedPool
     : 0;
 
+  // Two independent sources, reconciled explicitly instead of shown
+  // side-by-side unexplained:
+  //  - onChainNadoInteractions: confirmed real transactions with known
+  //    Nado contracts, from Ink's own explorer (checkActivity.ts)
+  //  - nado.hasNadoActivity: whether Nado's own Points API returned
+  //    data for this wallet (checkNadoActivity.ts)
+  // These can legitimately disagree — the API is unverified and may be
+  // using a wrong endpoint (see code comments in checkNadoActivity.ts),
+  // or points may not be calculated yet for very recent activity. A
+  // flat "no activity found" when we ALREADY know real interactions
+  // happened would be actively misleading, not just imprecise.
+  const hasOnChainActivity = onChainNadoInteractions > 0;
+
   return (
     <div className="mt-6">
       <div className="text-xs text-muted uppercase tracking-wide mb-2">Nado</div>
@@ -185,8 +209,19 @@ function NadoSection({ nado }: { nado: NadoPointsResult }) {
           <Stat label="Rank" value={nado.rank ? `#${nado.rank}` : "—"} />
           <Stat label="Tier" value={nado.tier ?? "—"} />
         </div>
+      ) : hasOnChainActivity ? (
+        <div className="text-sm text-warn mb-4 leading-relaxed">
+          Confirmed {onChainNadoInteractions} on-chain interaction{onChainNadoInteractions === 1 ? "" : "s"} with
+          Nado contracts (via Ink's explorer) — but Nado's own Points API didn't return matching
+          data for this wallet. This isn't "no activity": it likely means points haven't been
+          calculated for this activity yet, or there's a mismatch worth checking directly at{" "}
+          <span className="font-mono">app.nado.xyz/points</span>.
+        </div>
       ) : (
-        <div className="text-sm text-muted mb-4">No Nado trading activity found for this wallet.</div>
+        <div className="text-sm text-muted mb-4">
+          No on-chain Nado interactions found, and no points data returned — this wallet
+          doesn't appear to have Nado activity.
+        </div>
       )}
 
       <div className="bg-ink2 border border-white/10 rounded-lg p-4">
@@ -194,8 +229,8 @@ function NadoSection({ nado }: { nado: NadoPointsResult }) {
         <p className="text-xs text-muted mb-4 leading-relaxed">
           Nado's exact scoring formula (fee tier, anti-wash-trading adjustments, real relative
           share) is intentionally undisclosed. This slider only models the ONE publicly
-          documented mechanic, the weekly pool scaling from 300K toward 950K points as
-          protocol volume rises while using simplified math. Treat this as directional intuition
+          documented mechanic — the weekly pool scaling from 300K toward 950K points as
+          protocol volume rises — using simplified math. Treat this as directional intuition
           only, not a prediction.
         </p>
 
