@@ -3,6 +3,8 @@
 import { useState } from "react";
 import type { ActivityCheckResult } from "../../lib/checkActivity";
 import type { NadoPointsResult } from "../../lib/checkNadoActivity";
+import type { TydroRewardsResult } from "../../lib/checkTydroRewards";
+import { estimateAirdropValue } from "../../lib/estimateAirdropValue";
 
 export default function ActivityCheckerPage() {
   const [wallet, setWallet] = useState("");
@@ -11,6 +13,8 @@ export default function ActivityCheckerPage() {
   const [error, setError] = useState<string | null>(null);
   const [nadoResult, setNadoResult] = useState<NadoPointsResult | null>(null);
   const [nadoError, setNadoError] = useState<string | null>(null);
+  const [tydroResult, setTydroResult] = useState<TydroRewardsResult | null>(null);
+  const [tydroError, setTydroError] = useState<string | null>(null);
 
   async function handleCheck() {
     setLoading(true);
@@ -18,6 +22,8 @@ export default function ActivityCheckerPage() {
     setResult(null);
     setNadoResult(null);
     setNadoError(null);
+    setTydroResult(null);
+    setTydroError(null);
 
     const activityPromise = fetch("/api/activity-check", {
       method: "POST",
@@ -25,6 +31,11 @@ export default function ActivityCheckerPage() {
       body: JSON.stringify({ wallet }),
     });
     const nadoPromise = fetch("/api/nado-check", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ wallet }),
+    });
+    const tydroPromise = fetch("/api/tydro-rewards-check", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ wallet }),
@@ -39,8 +50,7 @@ export default function ActivityCheckerPage() {
       setError(e instanceof Error ? e.message : "Something went wrong");
     }
 
-    // Runs independently — a wallet with no Nado activity isn't an
-    // error, and a Nado outage shouldn't block the main activity result.
+    // All three run independently — one failing shouldn't block the others.
     try {
       const nadoRes = await nadoPromise;
       const nadoData = await nadoRes.json();
@@ -51,6 +61,18 @@ export default function ActivityCheckerPage() {
       }
     } catch (e) {
       setNadoError(e instanceof Error ? e.message : "Could not reach Nado's API");
+    }
+
+    try {
+      const tydroRes = await tydroPromise;
+      const tydroData = await tydroRes.json();
+      if (tydroRes.ok) {
+        setTydroResult(tydroData);
+      } else {
+        setTydroError(tydroData.error || "Could not reach Merkl's API");
+      }
+    } catch (e) {
+      setTydroError(e instanceof Error ? e.message : "Could not reach Merkl's API");
     }
 
     setLoading(false);
@@ -157,9 +179,148 @@ export default function ActivityCheckerPage() {
               onChainNadoInteractions={result?.protocolInteractions?.["Nado"] ?? 0}
             />
           )}
+
+          {tydroError && (
+            <div className="text-xs text-muted text-center mt-4">
+              Tydro rewards check unavailable: {tydroError}
+            </div>
+          )}
+
+          {tydroResult && <TydroSection tydro={tydroResult} />}
+
+          <ValueEstimatorSection
+            seedPoints={
+              nadoResult?.currentEpochPoints ??
+              (tydroResult?.rewards.length ? Number(tydroResult.rewards[0].amount) : undefined)
+            }
+          />
         </div>
       )}
     </main>
+  );
+}
+
+function TydroSection({ tydro }: { tydro: TydroRewardsResult }) {
+  return (
+    <div className="mt-6">
+      <div className="text-xs text-muted uppercase tracking-wide mb-2">
+        Tydro &amp; Ink Rewards (via Merkl)
+      </div>
+
+      {tydro.hasRewards ? (
+        <div className="bg-ink2 border border-white/10 rounded-lg p-4">
+          {tydro.rewards.map((r, i) => (
+            <div key={i} className="flex justify-between text-sm py-1">
+              <span>{r.campaignName ?? r.token.symbol}</span>
+              <span className="font-mono text-muted">
+                {(Number(r.amount) / 10 ** r.token.decimals).toLocaleString(undefined, {
+                  maximumFractionDigits: 4,
+                })}{" "}
+                {r.token.symbol}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="text-sm text-muted">No Merkl-distributed rewards found for this wallet on Ink.</div>
+      )}
+    </div>
+  );
+}
+
+function ValueEstimatorSection({ seedPoints }: { seedPoints?: number }) {
+  const [yourPoints, setYourPoints] = useState(seedPoints ?? 1000);
+  const [totalPointsSupply, setTotalPointsSupply] = useState(410_378); // Tydro Season 1 total, per public data
+  const [airdropTokenSupply, setAirdropTokenSupply] = useState(10_000_000);
+  const [assumedFdvUsd, setAssumedFdvUsd] = useState(500_000_000);
+  const [totalTokenSupply, setTotalTokenSupply] = useState(1_000_000_000);
+
+  const estimate = estimateAirdropValue({
+    yourPoints,
+    totalPointsSupply,
+    airdropTokenSupply,
+    assumedFdvUsd,
+    totalTokenSupply,
+  });
+
+  return (
+    <div className="mt-8">
+      <div className="text-xs text-muted uppercase tracking-wide mb-2">
+        Ink Rewards Value Estimator
+      </div>
+      <p className="text-xs text-muted mb-4 leading-relaxed">
+        This is a projection tool, not a prediction. Treat this as "what if" exploration only.
+      </p>
+
+      <div className="bg-ink2 border border-white/10 rounded-lg p-4 space-y-3">
+        <NumberField label="Your points" value={yourPoints} onChange={setYourPoints} />
+        <NumberField
+          label="Total points supply (season)"
+          value={totalPointsSupply}
+          onChange={setTotalPointsSupply}
+        />
+        <NumberField
+          label="Airdrop token supply for this pool"
+          value={airdropTokenSupply}
+          onChange={setAirdropTokenSupply}
+        />
+        <NumberField
+          label="Assumed FDV (USD)"
+          value={assumedFdvUsd}
+          onChange={setAssumedFdvUsd}
+        />
+        <NumberField
+          label="Total $INK token supply"
+          value={totalTokenSupply}
+          onChange={setTotalTokenSupply}
+        />
+
+        <div className="pt-3 border-t border-white/10 space-y-2">
+          <div className="flex justify-between text-sm">
+            <span className="text-muted">Your share of pool</span>
+            <span className="font-mono">{(estimate.yourShareOfPool * 100).toFixed(4)}%</span>
+          </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-muted">Estimated token allocation</span>
+            <span className="font-mono">
+              {estimate.estimatedTokenAllocation.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+            </span>
+          </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-muted">Assumed token price</span>
+            <span className="font-mono">${estimate.assumedTokenPriceUsd.toFixed(4)}</span>
+          </div>
+          <div className="flex justify-between items-center pt-2 border-t border-white/10">
+            <span className="text-xs text-muted">Estimated value</span>
+            <span className="text-lg font-bold font-mono">
+              ${estimate.estimatedValueUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+            </span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function NumberField({
+  label,
+  value,
+  onChange,
+}: {
+  label: string;
+  value: number;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <div>
+      <label className="block text-xs text-muted mb-1">{label}</label>
+      <input
+        type="number"
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        className="w-full bg-ink border border-white/10 rounded-md px-3 py-2 text-sm font-mono"
+      />
+    </div>
   );
 }
 
@@ -215,11 +376,11 @@ function NadoSection({
           Nado contracts (via Ink's explorer) — but Nado's own Points API didn't return matching
           data for this wallet. This isn't "no activity": it likely means points haven't been
           calculated for this activity yet, or there's a mismatch worth checking directly at{" "}
-          <span className="font-mono">app.nado.xyz/points</span>.
+          <span className="font-mono">app.nado.xyz/</span>.
         </div>
       ) : (
         <div className="text-sm text-muted mb-4">
-          No on-chain Nado interactions found, and no points data returned — this wallet
+          No on-chain Nado interactions found, and no points data returned, this wallet
           doesn't appear to have Nado activity.
         </div>
       )}
@@ -228,10 +389,7 @@ function NadoSection({
         <div className="text-xs text-muted uppercase tracking-wide mb-1">Rough Points Estimator</div>
         <p className="text-xs text-muted mb-4 leading-relaxed">
           Nado's exact scoring formula (fee tier, anti-wash-trading adjustments, real relative
-          share) is intentionally undisclosed. This slider only models the ONE publicly
-          documented mechanic — the weekly pool scaling from 300K toward 950K points as
-          protocol volume rises — using simplified math. Treat this as directional intuition
-          only, not a prediction.
+          share) is intentionally undisclosed.
         </p>
 
         <label className="block text-xs text-muted mb-1">
