@@ -1,118 +1,405 @@
 "use client";
 
 import { useState } from "react";
-import type { ActivityCheckResult } from "../../lib/checkActivity";
-import type { NadoPointsResult } from "../../lib/checkNadoActivity";
-import type { TydroRewardsResult } from "../../lib/checkTydroRewards";
-import { estimateAirdropValue } from "../../lib/estimateAirdropValue";
+import type { ScanResult } from "@/lib/scanWallet";
+import type { ContractCheckResult } from "@/lib/checkContract";
 
-export default function ActivityCheckerPage() {
-  const [wallet, setWallet] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<ActivityCheckResult | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [nadoResult, setNadoResult] = useState<NadoPointsResult | null>(null);
-  const [nadoError, setNadoError] = useState<string | null>(null);
-  const [tydroResult, setTydroResult] = useState<TydroRewardsResult | null>(null);
-  const [tydroError, setTydroError] = useState<string | null>(null);
+const RISK_STYLES = {
+  red: { bg: "bg-danger/10", border: "border-danger/40", text: "text-danger", dot: "bg-danger" },
+  yellow: { bg: "bg-warn/10", border: "border-warn/40", text: "text-warn", dot: "bg-warn" },
+  green: { bg: "bg-primary/10", border: "border-primary/40", text: "text-primary", dot: "bg-primary" },
+} as const;
 
-  async function handleCheck() {
-    setLoading(true);
-    setError(null);
-    setResult(null);
-    setNadoResult(null);
-    setNadoError(null);
-    setTydroResult(null);
-    setTydroError(null);
+type Tab = "wallet" | "contract" | "message";
 
-    const activityPromise = fetch("/api/activity-check", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ wallet }),
-    });
-    const nadoPromise = fetch("/api/nado-check", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ wallet }),
-    });
-    const tydroPromise = fetch("/api/tydro-rewards-check", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ wallet }),
-    });
+interface MessageCheckResult {
+  risk: "red" | "yellow" | "green";
+  score: number;
+  reasons: string[];
+  summary: string;
+  remaining: number;
+  limit: number;
+  resetsAt: string;
+  mentionedAddresses?: ContractCheckResult[];
+}
 
-    try {
-      const res = await activityPromise;
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Check failed");
-      setResult(data);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Something went wrong");
-    }
-
-    // All three run independently — one failing shouldn't block the others.
-    try {
-      const nadoRes = await nadoPromise;
-      const nadoData = await nadoRes.json();
-      if (nadoRes.ok) {
-        setNadoResult(nadoData);
-      } else {
-        setNadoError(nadoData.error || "Could not reach Nado's API");
-      }
-    } catch (e) {
-      setNadoError(e instanceof Error ? e.message : "Could not reach Nado's API");
-    }
-
-    try {
-      const tydroRes = await tydroPromise;
-      const tydroData = await tydroRes.json();
-      if (tydroRes.ok) {
-        setTydroResult(tydroData);
-      } else {
-        setTydroError(tydroData.error || "Could not reach Merkl's API");
-      }
-    } catch (e) {
-      setTydroError(e instanceof Error ? e.message : "Could not reach Merkl's API");
-    }
-
-    setLoading(false);
-  }
-
-  const protocolEntries = result ? Object.entries(result.protocolInteractions) : [];
+export default function Home() {
+  const [tab, setTab] = useState<Tab>("contract");
 
   return (
     <main className="max-w-xl mx-auto px-5 py-16">
       <div className="text-center mb-8">
         <div className="text-primary text-xs font-mono tracking-widest uppercase mb-3">
-          Ink Chain · Unofficial
+          Ink Chain · Wallet Safety
         </div>
-        <h1 className="text-3xl font-bold mb-2">Wallet Activity</h1>
-        <p className="text-muted text-sm">
-          See how active this wallet is across Inkonchain's protocols used by farmers.
-        </p>
-        <a href="/" className="inline-block text-primary text-xs mt-3 hover:underline">
-          Check out NotInked safety tools
-        </a>
+        <div className="mb-2">
+          <div className="card inline-flex items-center gap-3">
+            <div className="mark">
+              <div className="wordmark text-3xl font-bold">
+                <span className="not strike">not</span>
+                <span className="inked">Inked</span>
+              </div>
+            </div>
+          </div>
+        </div>
+        <p className="text-muted text-sm">Check before you get inked.</p>
       </div>
 
-      <div className="bg-warn/10 border border-warn/40 text-warn text-xs rounded-lg px-4 py-3 mb-8 leading-relaxed">
-        This shows verifiable on-chain activity, NOT official $INK points. Only Kraken Pro
-        trading is a confirmed points source as of this writing. Nado and Tydro activity are
-        confirmed airdrop-eligibility categories, but exact weighting is unpublished. Treat
-        this as informational, not a guarantee of any allocation.
+      <div className="flex gap-1 mb-8 bg-ink2 rounded-lg p-1">
+        <button
+          onClick={() => setTab("contract")}
+          className={`flex-1 text-xs sm:text-sm py-2 rounded-md transition ${tab === "contract" ? "bg-primary/15 text-text font-semibold" : "text-muted"
+            }`}
+        >
+          Before You Ape
+        </button>
+        <button
+          onClick={() => setTab("wallet")}
+          className={`flex-1 text-xs sm:text-sm py-2 rounded-md transition ${tab === "wallet" ? "bg-primary/15 text-text font-semibold" : "text-muted"
+            }`}
+        >
+          Wallet Scan
+        </button>
+        <button
+          onClick={() => setTab("message")}
+          className={`flex-1 text-xs sm:text-sm py-2 rounded-md transition ${tab === "message" ? "bg-primary/15 text-text font-semibold" : "text-muted"
+            }`}
+        >
+          Message Check
+        </button>
       </div>
 
+      {tab === "contract" && <ContractChecker />}
+      {tab === "wallet" && <WalletScanner />}
+      {tab === "message" && <MessageChecker />}
+    </main>
+  );
+}
+
+function ContractChecker() {
+  const [address, setAddress] = useState("");
+  const [txHash, setTxHash] = useState("");
+  const [reason, setReason] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<ContractCheckResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [reportMessage, setReportMessage] = useState<string | null>(null);
+
+  async function handleCheck() {
+    setLoading(true);
+    setError(null);
+    setResult(null);
+    try {
+      const res = await fetch("/api/contract-check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Check failed");
+      setResult(data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Something went wrong");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleReport() {
+    setError(null);
+    setReportMessage(null);
+    try {
+      const res = await fetch("/api/report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ address, txHash, reason }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Report failed");
+      setReportMessage(
+        data.status === "pending"
+          ? `Report received — needs ${data.confirmationsRemaining} more confirmations before it's flagged publicly`
+          : "Confirmed as risky"
+      );
+      setTxHash("");
+      setReason("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Something went wrong");
+    }
+  }
+
+  return (
+    <div>
+      <p className="text-xs text-muted mb-4">
+        Paste a contract or token address before you interact with it.
+      </p>
+      <div className="flex gap-2 mb-8">
+        <input
+          value={address}
+          onChange={(e) => setAddress(e.target.value)}
+          placeholder="0x... contract address"
+          className="flex-1 bg-ink2 border border-white/10 rounded-lg px-4 py-3 text-sm font-mono outline-none focus:border-primary/60"
+        />
+        <button
+          onClick={handleCheck}
+          disabled={loading || !address}
+          className="bg-primary text-ink font-semibold px-5 py-3 rounded-lg text-sm hover:bg-primaryDim disabled:opacity-40"
+        >
+          {loading ? "Checking…" : "Check"}
+        </button>
+      </div>
+
+      {error && (
+        <div className="bg-danger/10 border border-danger/40 text-danger text-sm rounded-lg px-4 py-3 mb-6">
+          {error}
+        </div>
+      )}
+
+      {reportMessage && <div className="text-safe text-sm mt-4">{reportMessage}</div>}
+
+      {result && (
+        <div>
+          <div className={`rounded-lg border ${RISK_STYLES[result.risk].bg} ${RISK_STYLES[result.risk].border} px-4 py-4`}>
+            <div className="flex items-center gap-2 mb-2">
+              <span className={`w-2 h-2 rounded-full ${RISK_STYLES[result.risk].dot}`} />
+              <span className={`text-xs font-semibold uppercase ${RISK_STYLES[result.risk].text}`}>
+                {result.risk}
+              </span>
+              {result.contractName && (
+                <span className="text-xs text-muted font-mono">· {result.contractName}</span>
+              )}
+            </div>
+            <ul className="text-sm space-y-1 list-disc list-inside">
+              {result.reasons.map((r, i) => (
+                <li key={i}>{r}</li>
+              ))}
+            </ul>
+            <div className="mt-4 grid grid-cols-2 gap-2 text-xs text-muted font-mono">
+              <span>proxy: {result.isProxy === null ? "unknown" : result.isProxy ? "detected" : "no"}</span>
+              <span>proxy admin: {result.proxyAdmin ?? "unknown"}</span>
+              <span>top holder: {result.topHolderPercent === null || result.topHolderPercent === undefined ? "unknown" : `${result.topHolderPercent.toFixed(1)}%`}</span>
+              <span>name spoof: {result.possibleNameSpoof === null ? "unknown" : result.possibleNameSpoof ? "possible" : "no"}</span>
+            </div>
+            {result.dangerousFunctions && result.dangerousFunctions.length > 0 && (
+              <div className="text-xs text-warn mt-3">Potentially dangerous functions: {result.dangerousFunctions.join(", ")}</div>
+            )}
+          </div>
+
+          <div className="border-t border-white/10 pt-6 mt-6">
+            <div className="text-xs font-semibold uppercase tracking-wide mb-3">Report malicious activity</div>
+            <input
+              value={txHash}
+              onChange={(e) => setTxHash(e.target.value)}
+              placeholder="Transaction hash of the malicious action"
+              required
+              className="w-full bg-ink2 border border-white/10 rounded-lg px-4 py-3 text-sm font-mono outline-none focus:border-safe/50 mb-3"
+            />
+            <textarea
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              placeholder="Why is this address malicious?"
+              required
+              rows={3}
+              className="w-full bg-ink2 border border-white/10 rounded-lg px-4 py-3 text-sm outline-none focus:border-safe/50 resize-none mb-3"
+            />
+            <button
+              onClick={handleReport}
+              disabled={!address || !txHash || !reason.trim()}
+              className="bg-white/10 text-white font-semibold px-5 py-2.5 rounded-lg text-sm disabled:opacity-40"
+            >
+              Submit report
+            </button>
+            {reportMessage && <div className="text-safe text-sm mt-4">{reportMessage}</div>}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function WalletScanner() {
+  const [wallet, setWallet] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<ScanResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleScan() {
+    setLoading(true);
+    setError(null);
+    setResult(null);
+    try {
+      const res = await fetch("/api/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ wallet }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Scan failed");
+      setResult(data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Something went wrong");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div>
+      <p className="text-xs text-muted mb-4">
+        Full approval history, verified live. Checks all you've ever approved and
+        whether it's still active right now.
+      </p>
       <div className="flex gap-2 mb-8">
         <input
           value={wallet}
           onChange={(e) => setWallet(e.target.value)}
-          placeholder="0x... your wallet address"
-          className="flex-1 bg-ink2 border border-white/10 rounded-lg px-4 py-3 text-sm font-mono outline-none focus:border-primary/50"
+          placeholder="0x... wallet address"
+          className="flex-1 bg-ink2 border border-white/10 rounded-lg px-4 py-3 text-sm font-mono outline-none focus:border-primary/60"
         />
         <button
-          onClick={handleCheck}
+          onClick={handleScan}
           disabled={loading || !wallet}
-          className="bg-primary text-ink font-semibold px-5 py-3 rounded-lg text-sm disabled:opacity-40"
+          className="bg-primary text-ink font-semibold px-5 py-3 rounded-lg text-sm hover:bg-primaryDim disabled:opacity-40"
+        >
+          {loading ? "Scanning…" : "Scan"}
+        </button>
+      </div>
+
+      {error && (
+        <div className="bg-danger/10 border border-danger/40 text-danger text-sm rounded-lg px-4 py-3 mb-6">
+          {error}
+        </div>
+      )}
+
+      {result && (
+        <div>
+          <div className="text-xs text-muted font-mono mb-4">
+            {result.approvals.length} active approval
+            {result.approvals.length === 1 ? "" : "s"} found · {result.historicalApprovalCount} historical event
+            {result.historicalApprovalCount === 1 ? "" : "s"} checked
+          </div>
+
+          {result.approvals.length === 0 && (
+            <div className="text-sm text-muted text-center py-10">
+              {result.historicalApprovalCount > 0
+                ? `No currently active approvals found. ${result.historicalApprovalCount} historical approval event${result.historicalApprovalCount === 1 ? " was" : "s were"} discovered, but each allowance was revoked, spent, or could not be verified.`
+                : "No approval history found for this wallet."}
+            </div>
+          )}
+
+          <div className="flex flex-col gap-3">
+            {result.approvals.map((a, i) => {
+              const s = RISK_STYLES[a.risk];
+              return (
+                <div key={i} className={`rounded-lg border ${s.bg} ${s.border} px-4 py-3`}>
+                  <div className="flex items-center gap-2 mb-1.5">
+                    <span className={`w-2 h-2 rounded-full ${s.dot}`} />
+                    <span className={`text-xs font-semibold uppercase ${s.text}`}>
+                      {a.risk}
+                    </span>
+                  </div>
+                  <div className="text-sm mb-1">{a.reason}</div>
+                  <div className="text-xs text-muted font-mono break-all mb-1">
+                    current allowance: {a.isUnlimited ? "unlimited" : a.currentAllowance}
+                    <span className="text-muted/60"> (live)</span>
+                  </div>
+                  <div className="text-xs text-muted font-mono break-all">
+                    spender: {a.spender}
+                  </div>
+                  <div className="text-xs text-muted font-mono break-all">
+                    token: {a.tokenAddress}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {result.nftApprovals.length > 0 && (
+            <div className="mt-6">
+              <div className="text-xs text-muted font-mono mb-4">
+                {result.nftApprovals.length} active NFT approval{result.nftApprovals.length === 1 ? "" : "s"}
+              </div>
+              <div className="flex flex-col gap-3">
+                {result.nftApprovals.map((approval, i) => {
+                  const s = RISK_STYLES[approval.risk];
+                  return (
+                    <div key={i} className={`rounded-lg border ${s.bg} ${s.border} px-4 py-3`}>
+                      <div className="flex items-center gap-2 mb-1.5">
+                        <span className={`w-2 h-2 rounded-full ${s.dot}`} />
+                        <span className={`text-xs font-semibold uppercase ${s.text}`}>{approval.risk}</span>
+                      </div>
+                      <div className="text-sm mb-1">{approval.reason}</div>
+                      <div className="text-xs text-muted font-mono break-all">operator: {approval.operator}</div>
+                      <div className="text-xs text-muted font-mono break-all">collection: {approval.collectionAddress}</div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MessageChecker() {
+  const [text, setText] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [result, setResult] = useState<MessageCheckResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [limitInfo, setLimitInfo] = useState<{ remaining: number; limit: number } | null>(
+    null
+  );
+
+  async function handleCheck() {
+    setLoading(true);
+    setError(null);
+    setResult(null);
+    try {
+      const res = await fetch("/api/scam-check", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text, identifier: "anonymous", isPremium: false }),
+      });
+      const data = await res.json();
+
+      if (res.status === 429) {
+        setError(
+          `Daily limit reached (${data.limit}/day). Resets at ${new Date(
+            data.resetsAt
+          ).toLocaleTimeString()}.`
+        );
+        return;
+      }
+      if (!res.ok) throw new Error(data.error || "Check failed");
+
+      setResult(data);
+      setLimitInfo({ remaining: data.remaining, limit: data.limit });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Something went wrong");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div>
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder="Paste a suspicious DM, airdrop offer, or link..."
+        rows={5}
+        className="w-full bg-ink2 border border-white/10 rounded-lg px-4 py-3 text-sm outline-none focus:border-primary/60 mb-3 resize-none"
+      />
+      <div className="flex items-center justify-between mb-8">
+        <span className="text-xs text-muted font-mono">
+          {limitInfo ? `${limitInfo.remaining}/${limitInfo.limit} checks left today` : "5 free checks/day"}
+        </span>
+        <button
+          onClick={handleCheck}
+          disabled={loading || !text.trim()}
+          className="bg-primary text-ink font-semibold px-5 py-2.5 rounded-lg text-sm hover:bg-primaryDim disabled:opacity-40"
         >
           {loading ? "Checking…" : "Check"}
         </button>
@@ -125,315 +412,34 @@ export default function ActivityCheckerPage() {
       )}
 
       {result && (
-        <div>
-          <div className="grid grid-cols-2 gap-3 mb-4">
-            <Stat label="Total transactions" value={result.txCount.toString()} />
-            <Stat
-              label="Unique contracts touched"
-              value={`${result.uniqueContractsTouched}${result.isPartialContractCount ? "+" : ""}`}
-            />
-            <Stat
-              label="Wallet age on Ink"
-              value={result.walletAgeDays !== null ? `${result.walletAgeDays}d` : "—"}
-            />
-            <Stat
-              label="Last active"
-              value={result.daysSinceLastActive !== null ? `${result.daysSinceLastActive}d ago` : "—"}
-            />
+        <div className={`rounded-lg border ${RISK_STYLES[result.risk].bg} ${RISK_STYLES[result.risk].border} px-4 py-4`}>
+          <div className="flex items-center gap-2 mb-2">
+            <span className={`w-2 h-2 rounded-full ${RISK_STYLES[result.risk].dot}`} />
+            <span className={`text-xs font-semibold uppercase ${RISK_STYLES[result.risk].text}`}>
+              {result.risk} · score {result.score}/100
+            </span>
           </div>
-
-          {protocolEntries.length > 0 ? (
-            <div className="bg-ink2 border border-white/10 rounded-lg p-4">
-              <div className="text-xs text-muted uppercase tracking-wide mb-2">
-                Confirmed-eligible protocol activity
-              </div>
-              {protocolEntries.map(([name, count]) => (
-                <div key={name} className="flex justify-between text-sm py-1">
-                  <span>{name}</span>
-                  <span className="font-mono text-muted">{count} interactions</span>
+          <div className="text-sm mb-3">{result.summary}</div>
+          {result.reasons.length > 0 && (
+            <ul className="text-xs text-muted space-y-1 list-disc list-inside">
+              {result.reasons.map((r, i) => (
+                <li key={i}>{r}</li>
+              ))}
+            </ul>
+          )}
+          {result.mentionedAddresses && result.mentionedAddresses.length > 0 && (
+            <div className="mt-4 border-t border-white/10 pt-3">
+              <div className="text-xs text-muted font-mono mb-2">Addresses checked</div>
+              {result.mentionedAddresses.map((address) => (
+                <div key={address.address} className="text-xs mb-2">
+                  <span className={RISK_STYLES[address.risk].text}>{address.risk}</span>{" "}
+                  <span className="font-mono break-all">{address.address}</span>
                 </div>
               ))}
             </div>
-          ) : (
-            <div className="text-xs text-muted text-center py-4">
-              No Nado or Tydro interactions were found in the indexed transaction history.
-            </div>
           )}
-
-          {result.isPartialContractCount && (
-            <div className="text-xs text-muted mt-3 text-center">
-              Contract count is based on the most recent page of transaction history, not
-              the full total.
-            </div>
-          )}
-
-          {nadoError && (
-            <div className="text-xs text-muted text-center mt-4">
-              Nado points check unavailable: {nadoError}
-            </div>
-          )}
-
-          {nadoResult && (
-            <NadoSection
-              nado={nadoResult}
-              onChainNadoInteractions={result?.protocolInteractions?.["Nado"] ?? 0}
-            />
-          )}
-
-          {tydroError && (
-            <div className="text-xs text-muted text-center mt-4">
-              Tydro rewards check unavailable: {tydroError}
-            </div>
-          )}
-
-          {tydroResult && <TydroSection tydro={tydroResult} />}
-
-          <ValueEstimatorSection
-            seedPoints={
-              nadoResult?.currentEpochPoints ??
-              (tydroResult?.rewards.length ? Number(tydroResult.rewards[0].amount) : undefined)
-            }
-          />
         </div>
       )}
-    </main>
-  );
-}
-
-function TydroSection({ tydro }: { tydro: TydroRewardsResult }) {
-  return (
-    <div className="mt-6">
-      <div className="text-xs text-muted uppercase tracking-wide mb-2">
-        Tydro &amp; Ink Rewards (via Merkl)
-      </div>
-
-      {tydro.hasRewards ? (
-        <div className="bg-ink2 border border-white/10 rounded-lg p-4">
-          {tydro.rewards.map((r, i) => (
-            <div key={i} className="flex justify-between text-sm py-1">
-              <span>{r.campaignName ?? r.token.symbol}</span>
-              <span className="font-mono text-muted">
-                {(Number(r.amount) / 10 ** r.token.decimals).toLocaleString(undefined, {
-                  maximumFractionDigits: 4,
-                })}{" "}
-                {r.token.symbol}
-              </span>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="text-sm text-muted">No Merkl-distributed rewards found for this wallet on Ink.</div>
-      )}
-    </div>
-  );
-}
-
-function ValueEstimatorSection({ seedPoints }: { seedPoints?: number }) {
-  const [yourPoints, setYourPoints] = useState(seedPoints ?? 1000);
-  const [totalPointsSupply, setTotalPointsSupply] = useState(410_378); // Tydro Season 1 total, per public data
-  const [airdropTokenSupply, setAirdropTokenSupply] = useState(10_000_000);
-  const [assumedFdvUsd, setAssumedFdvUsd] = useState(500_000_000);
-  const [totalTokenSupply, setTotalTokenSupply] = useState(1_000_000_000);
-
-  const estimate = estimateAirdropValue({
-    yourPoints,
-    totalPointsSupply,
-    airdropTokenSupply,
-    assumedFdvUsd,
-    totalTokenSupply,
-  });
-
-  return (
-    <div className="mt-8">
-      <div className="text-xs text-muted uppercase tracking-wide mb-2">
-        Ink Rewards Value Estimator
-      </div>
-      <p className="text-xs text-muted mb-4 leading-relaxed">
-        This is a projection tool, not a prediction. Treat this as "what if" exploration only.
-      </p>
-
-      <div className="bg-ink2 border border-white/10 rounded-lg p-4 space-y-3">
-        <NumberField label="Your points" value={yourPoints} onChange={setYourPoints} />
-        <NumberField
-          label="Total points supply (season)"
-          value={totalPointsSupply}
-          onChange={setTotalPointsSupply}
-        />
-        <NumberField
-          label="Airdrop token supply for this pool"
-          value={airdropTokenSupply}
-          onChange={setAirdropTokenSupply}
-        />
-        <NumberField
-          label="Assumed FDV (USD)"
-          value={assumedFdvUsd}
-          onChange={setAssumedFdvUsd}
-        />
-        <NumberField
-          label="Total $INK token supply"
-          value={totalTokenSupply}
-          onChange={setTotalTokenSupply}
-        />
-
-        <div className="pt-3 border-t border-white/10 space-y-2">
-          <div className="flex justify-between text-sm">
-            <span className="text-muted">Your share of pool</span>
-            <span className="font-mono">{(estimate.yourShareOfPool * 100).toFixed(4)}%</span>
-          </div>
-          <div className="flex justify-between text-sm">
-            <span className="text-muted">Estimated token allocation</span>
-            <span className="font-mono">
-              {estimate.estimatedTokenAllocation.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-            </span>
-          </div>
-          <div className="flex justify-between text-sm">
-            <span className="text-muted">Assumed token price</span>
-            <span className="font-mono">${estimate.assumedTokenPriceUsd.toFixed(4)}</span>
-          </div>
-          <div className="flex justify-between items-center pt-2 border-t border-white/10">
-            <span className="text-xs text-muted">Estimated value</span>
-            <span className="text-lg font-bold font-mono">
-              ${estimate.estimatedValueUsd.toLocaleString(undefined, { maximumFractionDigits: 2 })}
-            </span>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function NumberField({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: number;
-  onChange: (v: number) => void;
-}) {
-  return (
-    <div>
-      <label className="block text-xs text-muted mb-1">{label}</label>
-      <input
-        type="number"
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-        className="w-full bg-ink border border-white/10 rounded-md px-3 py-2 text-sm font-mono"
-      />
-    </div>
-  );
-}
-
-function NadoSection({
-  nado,
-  onChainNadoInteractions,
-}: {
-  nado: NadoPointsResult;
-  onChainNadoInteractions: number;
-}) {
-  const [simulatedVolume, setSimulatedVolume] = useState(500);
-  const [protocolVolume, setProtocolVolume] = useState(5_000);
-
-  // Rough client-side mirror of estimateNadoPointsShare from
-  // lib/checkNadoActivity.ts — kept in the UI so the slider updates
-  // instantly without a round-trip per drag.
-  const POOL_FLOOR = 300_000;
-  const POOL_CAP = 950_000;
-  const scaleFactor = Math.min(1, Math.sqrt(protocolVolume / 50_000_000));
-  const estimatedPool = POOL_FLOOR + (POOL_CAP - POOL_FLOOR) * scaleFactor;
-  const weeklyProtocolVolume = protocolVolume * 7;
-  const roughShare = weeklyProtocolVolume > 0
-    ? (simulatedVolume / (weeklyProtocolVolume + simulatedVolume)) * estimatedPool
-    : 0;
-
-  // Two independent sources, reconciled explicitly instead of shown
-  // side-by-side unexplained:
-  //  - onChainNadoInteractions: confirmed real transactions with known
-  //    Nado contracts, from Ink's own explorer (checkActivity.ts)
-  //  - nado.hasNadoActivity: whether Nado's own Points API returned
-  //    data for this wallet (checkNadoActivity.ts)
-  // These can legitimately disagree — the API is unverified and may be
-  // using a wrong endpoint (see code comments in checkNadoActivity.ts),
-  // or points may not be calculated yet for very recent activity. A
-  // flat "no activity found" when we ALREADY know real interactions
-  // happened would be actively misleading, not just imprecise.
-  const hasOnChainActivity = onChainNadoInteractions > 0;
-
-  return (
-    <div className="mt-6">
-      <div className="text-xs text-muted uppercase tracking-wide mb-2">Nado</div>
-
-      {nado.hasNadoActivity ? (
-        <div className="grid grid-cols-2 gap-3 mb-4">
-          <Stat label="Current epoch points" value={nado.currentEpochPoints?.toString() ?? "—"} />
-          <Stat label="All-time points" value={nado.allTimePoints?.toString() ?? "—"} />
-          <Stat label="Rank" value={nado.rank ? `#${nado.rank}` : "—"} />
-          <Stat label="Tier" value={nado.tier ?? "—"} />
-        </div>
-      ) : hasOnChainActivity ? (
-        <div className="text-sm text-warn mb-4 leading-relaxed">
-          Confirmed {onChainNadoInteractions} on-chain interaction{onChainNadoInteractions === 1 ? "" : "s"} with
-          Nado contracts (via Ink's explorer) — but Nado's own Points API didn't return matching
-          data for this wallet. This isn't "no activity": it likely means points haven't been
-          calculated for this activity yet, or there's a mismatch worth checking directly at{" "}
-          <span className="font-mono">app.nado.xyz/</span>.
-        </div>
-      ) : (
-        <div className="text-sm text-muted mb-4">
-          No on-chain Nado interactions found, and no points data returned, this wallet
-          doesn't appear to have Nado activity.
-        </div>
-      )}
-
-      <div className="bg-ink2 border border-white/10 rounded-lg p-4">
-        <div className="text-xs text-muted uppercase tracking-wide mb-1">Rough Points Estimator</div>
-        <p className="text-xs text-muted mb-4 leading-relaxed">
-          Nado's exact scoring formula (fee tier, anti-wash-trading adjustments, real relative
-          share) is intentionally undisclosed.
-        </p>
-
-        <label className="block text-xs text-muted mb-1">
-          Your simulated weekly volume: ${simulatedVolume.toLocaleString()}
-        </label>
-        <input
-          type="range"
-          min={0}
-          max={2_000_000}
-          step={10_000}
-          value={simulatedVolume}
-          onChange={(e) => setSimulatedVolume(Number(e.target.value))}
-          className="w-full mb-4 accent-primary"
-        />
-
-        <label className="block text-xs text-muted mb-1">
-          Estimated protocol-wide avg daily volume: ${protocolVolume.toLocaleString()}
-        </label>
-        <input
-          type="range"
-          min={1_000_000}
-          max={200_000_000}
-          step={1_000_000}
-          value={protocolVolume}
-          onChange={(e) => setProtocolVolume(Number(e.target.value))}
-          className="w-full mb-4 accent-primary"
-        />
-
-        <div className="flex justify-between items-center pt-3 border-t border-white/10">
-          <span className="text-xs text-muted">Rough estimated weekly share</span>
-          <span className="text-lg font-bold font-mono">
-            ~{roughShare.toLocaleString(undefined, { maximumFractionDigits: 0 })} pts
-          </span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function Stat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="bg-ink2 border border-white/10 rounded-lg p-4">
-      <div className="text-xs text-muted uppercase tracking-wide mb-1">{label}</div>
-      <div className="text-2xl font-bold font-mono">{value}</div>
     </div>
   );
 }
