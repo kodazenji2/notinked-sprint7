@@ -2,7 +2,7 @@
 
 Wallet safety checker for Ink chain (Kraken's L2). "Check before you get inked."
 
-## Agile plan — 2 sprints
+## Agile plan I used for this project. 
 
 ### Sprint 1 (this scaffold): On-chain approval scanner
 - Paste a wallet address
@@ -102,25 +102,6 @@ The main `/` page remains limited to **Before You Ape**, **Wallet Scan**, and **
 
 ---
 
-## Setup
-
-```bash
-npm install
-cp .env.example .env.local
-# then edit .env.local and add a free Groq key from console.groq.com
-npm run dev
-```
-
-Open http://localhost:3000
-
-## Rate limiting (Sprint 2)
-- Free: 5 checks/day per session, resets at UTC midnight
-- Premium: 100/day (placeholder for "unlimited") — gated behind an `isPremium` flag that nothing sets yet
-- Rate limiting is now session-based: each user gets a long-lived session ID that persists for 30 days, ensuring true per-user limiting without requiring wallet connection or being bound to IP address.
-- Wallet addresses are still accepted and take priority over session limiting; if provided, the user is identified by their wallet instead of session.
-- Sessions are stored in Upstash Redis with a 30-day TTL. The client must send the `sessionId` in the request body to reuse their quota across multiple visits.
-- Storage now persists in Upstash Redis via `lib/rateLimit.ts`, `lib/cache.ts`, `lib/riskRegistry.ts`, and `lib/session.ts`, so registry entries, TTL cache values, daily limits, and user sessions survive deploys and cold starts instead of resetting on every restart.
-
 ## Stack
 - Next.js 16 (App Router)
 - viem — reads Ink chain directly, no backend indexer needed for v1
@@ -132,11 +113,6 @@ Open http://localhost:3000
 3. Verifies ERC20 allowances live through Multicall3 and retains only nonzero allowances; NFT approvals retain only the latest `approved: true` state.
 4. Enriches spenders/operators with the contract checker and returns structured risk results — no wallet connection required, read-only.
 
-## Current next steps
-- Run `lib/importExternalRisk.ts` to seed the registry with known scams from ScamSniffer's public database
-- Move reporter identities and consensus to persistent storage so it survives restarts and remains resistant to spoofed identities.
-- Add a non-transaction evidence model for ABI, proxy, holder, and message findings.
-- Add broader tests for Blockscout response parsing, approval state reduction, and external API failure cases.
 
 ## External Risk Import
 
@@ -164,8 +140,8 @@ Run manually: `npx ts-node -O '{"module":"commonjs"}' lib/importExternalRisk.ts`
 Add the browser widget to any Ink dashboard:
 
 ```html
-<div data-notinked-address="0xYourAddress"></div>
-<script src="https://YOUR_DEPLOYED_DOMAIN/widget.js" defer></script>
+<div data-notinked-address="0x.."></div>
+<script src="https://notinked.xyz/widget.js" defer></script>
 ```
 
-The script calls `/api/public/risk-check` and renders a single-address risk badge. It is currently contract/address-focused; wallet and message widgets, custom themes, callbacks, and an iframe wrapper are not implemented yet. The public endpoints are CORS-friendly, but consumers should still add their own caching and rate-limit handling.
+The script calls `/api/public/risk-check` and renders a single-address risk badge. It is currently contract/address-focused; wallet and message widgets, custom themes, callbacks, and an iframe wrapper are not implemented yet. The public endpoints are CORS-friendly, but consumers should still add their own caching and rate-limit handling.  The widget is still being stress tested before full implementation.
