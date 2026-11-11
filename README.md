@@ -51,7 +51,6 @@ Paste a suspicious message or link. An LLM-powered checker flags common scam pat
 ## Tech stack
 
 - **Frontend:** [TypeScript]
-- **Backend / API:** [e.g. Node.js routes]
 - **Chain data:** [Ink RPC, explorer API]
 - **AI:** Groq (LLM scam message detection)
 - **Hosting:** [Paid Services using .xyz domain]
